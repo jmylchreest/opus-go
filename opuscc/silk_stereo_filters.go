@@ -12,101 +12,38 @@ import (
 var _ reflect.Type
 var _ unsafe.Pointer
 
-func Opus_silk_stereo_MS_to_LR(tls *libc.TLS, state uintptr, x1 uintptr, x2 uintptr, pred_Q13 uintptr, fs_kHz int32, frame_length int32) {
-	var delta0_Q13, delta1_Q13, denom_Q16, n, v2, v3 int32
-	var diff, pred0_Q13, pred1_Q13, sum OpusT_opus_int32
-	_, _, _, _, _, _, _, _, _, _ = delta0_Q13, delta1_Q13, denom_Q16, diff, n, pred0_Q13, pred1_Q13, sum, v2, v3
-	stereoState := (*OpusT_stereo_dec_state)(unsafe.Pointer(state))
-	/* Buffering */
-	libc.Xmemcpy(tls, x1, uintptr(unsafe.Pointer(&stereoState.FsMid[0])), uint64(uint32(2))*uint64(2))
-	libc.Xmemcpy(tls, x2, uintptr(unsafe.Pointer(&stereoState.FsSide[0])), uint64(uint32(2))*uint64(2))
-	libc.Xmemcpy(tls, uintptr(unsafe.Pointer(&stereoState.FsMid[0])), x1+uintptr(frame_length)*2, uint64(uint32(2))*uint64(2))
-	libc.Xmemcpy(tls, uintptr(unsafe.Pointer(&stereoState.FsSide[0])), x2+uintptr(frame_length)*2, uint64(uint32(2))*uint64(2))
-	/* Interpolate predictors and add prediction to side channel */
-	pred0_Q13 = int32(stereoState.Fpred_prev_Q13[0])
-	pred1_Q13 = int32(stereoState.Fpred_prev_Q13[1])
-	denom_Q16 = int32(1) << int32(16) / (int32(STEREO_INTERP_LEN_MS) * fs_kHz)
-	delta0_Q13 = (int32(int16(*(*OpusT_opus_int32)(unsafe.Pointer(pred_Q13))-int32(stereoState.Fpred_prev_Q13[0])))*int32(int16(denom_Q16))>>(int32(16)-int32(1)) + int32(1)) >> int32(1)
-	delta1_Q13 = (int32(int16(*(*OpusT_opus_int32)(unsafe.Pointer(pred_Q13 + 1*4))-int32(stereoState.Fpred_prev_Q13[1])))*int32(int16(denom_Q16))>>(int32(16)-int32(1)) + int32(1)) >> int32(1)
-	n = 0
-	for {
-		if !(n < int32(STEREO_INTERP_LEN_MS)*fs_kHz) {
-			break
+func Opus_silk_stereo_MS_to_LR(tls *libc.TLS, state *OpusT_stereo_dec_state, x1 *OpusT_opus_int16, x2 *OpusT_opus_int16, pred_Q13 *[2]OpusT_opus_int32, fs_kHz int32, frame_length int32) {
+	// Codec frames contain at least the 8 ms interpolation interval, plus two history slots.
+	mid := unsafe.Slice(x1, int(frame_length)+2)
+	side := unsafe.Slice(x2, int(frame_length)+2)
+	copy(mid[:2], state.FsMid[:])
+	copy(side[:2], state.FsSide[:])
+	copy(state.FsMid[:], mid[frame_length:])
+	copy(state.FsSide[:], side[frame_length:])
+	pred0, pred1 := int32(state.Fpred_prev_Q13[0]), int32(state.Fpred_prev_Q13[1])
+	interp := int32(STEREO_INTERP_LEN_MS) * fs_kHz
+	denom := int32(1<<16) / interp
+	delta0 := (((int32(int16(pred_Q13[0]-pred0)) * int32(int16(denom))) >> 15) + 1) >> 1
+	delta1 := (((int32(int16(pred_Q13[1]-pred1)) * int32(int16(denom))) >> 15) + 1) >> 1
+	for n := int32(0); n < frame_length; n++ {
+		if n < interp {
+			pred0 += delta0
+			pred1 += delta1
+		} else if n == interp {
+			pred0, pred1 = pred_Q13[0], pred_Q13[1]
 		}
-		pred0_Q13 = pred0_Q13 + delta0_Q13
-		pred1_Q13 = pred1_Q13 + delta1_Q13
-		sum = int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n)*2)))+int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(2))*2)))+int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(1))*2)))<<int32(1)) << int32(9)) /* Q11 */
-		sum = int32(int64(int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x2 + uintptr(n+int32(1))*2))))<<int32(8))) + int64(sum)*int64(int16(pred0_Q13))>>int32(16))                                                                                      /* Q8  */
-		sum = int32(int64(sum) + int64(int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(1))*2))))<<int32(11)))*int64(int16(pred1_Q13))>>int32(16))                                                                                     /* Q8  */
-		if (sum>>(int32(8)-int32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if (sum>>(int32(8)-int32(1))+int32(1))>>int32(1) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = (sum>>(int32(8)-int32(1)) + int32(1)) >> int32(1)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(x2 + uintptr(n+int32(1))*2)) = int16(v2)
-		n = n + 1
+		// SILK's Q11/Q8 arithmetic narrows multipliers to signed 16 bits.
+		sum := (int32(mid[n]) + int32(mid[n+2]) + (int32(mid[n+1]) << 1)) << 9
+		sum = int32(int64(int32(side[n+1])<<8) + ((int64(sum) * int64(int16(pred0))) >> 16))
+		sum = int32(int64(sum) + ((int64(int32(mid[n+1])<<11) * int64(int16(pred1))) >> 16))
+		value := ((sum >> 7) + 1) >> 1
+		side[n+1] = int16(min(max(value, -32768), 32767))
 	}
-	pred0_Q13 = *(*OpusT_opus_int32)(unsafe.Pointer(pred_Q13))
-	pred1_Q13 = *(*OpusT_opus_int32)(unsafe.Pointer(pred_Q13 + 1*4))
-	n = int32(STEREO_INTERP_LEN_MS) * fs_kHz
-	for {
-		if !(n < frame_length) {
-			break
-		}
-		sum = int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n)*2)))+int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(2))*2)))+int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(1))*2)))<<int32(1)) << int32(9)) /* Q11 */
-		sum = int32(int64(int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x2 + uintptr(n+int32(1))*2))))<<int32(8))) + int64(sum)*int64(int16(pred0_Q13))>>int32(16))                                                                                      /* Q8  */
-		sum = int32(int64(sum) + int64(int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(1))*2))))<<int32(11)))*int64(int16(pred1_Q13))>>int32(16))                                                                                     /* Q8  */
-		if (sum>>(int32(8)-int32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if (sum>>(int32(8)-int32(1))+int32(1))>>int32(1) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = (sum>>(int32(8)-int32(1)) + int32(1)) >> int32(1)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(x2 + uintptr(n+int32(1))*2)) = int16(v2)
-		n = n + 1
-	}
-	stereoState.Fpred_prev_Q13[0] = int16(*(*OpusT_opus_int32)(unsafe.Pointer(pred_Q13)))
-	stereoState.Fpred_prev_Q13[1] = int16(*(*OpusT_opus_int32)(unsafe.Pointer(pred_Q13 + 1*4)))
-	/* Convert to left/right signals */
-	n = 0
-	for {
-		if !(n < frame_length) {
-			break
-		}
-		sum = int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(1))*2))) + int32(*(*OpusT_opus_int16)(unsafe.Pointer(x2 + uintptr(n+int32(1))*2)))
-		diff = int32(*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(1))*2))) - int32(*(*OpusT_opus_int16)(unsafe.Pointer(x2 + uintptr(n+int32(1))*2)))
-		if sum > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if sum < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = sum
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(x1 + uintptr(n+int32(1))*2)) = int16(v2)
-		if diff > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if diff < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = diff
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(x2 + uintptr(n+int32(1))*2)) = int16(v2)
-		n = n + 1
+	state.Fpred_prev_Q13[0], state.Fpred_prev_Q13[1] = int16(pred_Q13[0]), int16(pred_Q13[1])
+	for n := int32(1); n <= frame_length; n++ {
+		sum, diff := int32(mid[n])+int32(side[n]), int32(mid[n])-int32(side[n])
+		mid[n] = int16(min(max(sum, -32768), 32767))
+		side[n] = int16(min(max(diff, -32768), 32767))
 	}
 }
 
@@ -756,69 +693,40 @@ const SILK_PE_MAX_COMPLEX = 2
 const SILK_PE_MID_COMPLEX = 1
 const SILK_PE_MIN_COMPLEX = 0
 
-func Opus_silk_decode_pitch(tls *libc.TLS, lagIndex OpusT_opus_int16, contourIndex OpusT_opus_int8, pitch_lags uintptr, Fs_kHz int32, nb_subfr int32) {
-	var Lag_CB_ptr uintptr
-	var cbk_size, k, lag, max_lag, min_lag, v2, v3, v4, v5, v6 int32
-	_, _, _, _, _, _, _, _, _, _, _ = Lag_CB_ptr, cbk_size, k, lag, max_lag, min_lag, v2, v3, v4, v5, v6
+func Opus_silk_decode_pitch(tls *libc.TLS, lagIndex OpusT_opus_int16, contourIndex OpusT_opus_int8, pitch_lags *int32, Fs_kHz int32, nb_subfr int32) {
+	var lags []OpusT_opus_int8
+	var cbk_size int32
 	if Fs_kHz == int32(8) {
 		if nb_subfr == int32(PE_MAX_NB_SUBFR) {
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage2))
+			lags = unsafe.Slice(&Opus_silk_CB_lags_stage2[0][0], 4*11)
 			cbk_size = int32(PE_NB_CBKS_STAGE2_EXT)
 		} else {
 			if !(nb_subfr == int32(PE_MAX_NB_SUBFR)>>int32(1)) {
 				Opus_celt_fatal(tls, __ccgo_ts+7059, __ccgo_ts+7110, int32(54))
 			}
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage2_10_ms))
+			lags = unsafe.Slice(&Opus_silk_CB_lags_stage2_10_ms[0][0], 2*3)
 			cbk_size = int32(PE_NB_CBKS_STAGE2_10MS)
 		}
 	} else {
 		if nb_subfr == int32(PE_MAX_NB_SUBFR) {
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage3))
+			lags = unsafe.Slice(&Opus_silk_CB_lags_stage3[0][0], 4*34)
 			cbk_size = int32(PE_NB_CBKS_STAGE3_MAX)
 		} else {
 			if !(nb_subfr == int32(PE_MAX_NB_SUBFR)>>int32(1)) {
 				Opus_celt_fatal(tls, __ccgo_ts+7059, __ccgo_ts+7110, int32(63))
 			}
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage3_10_ms))
+			lags = unsafe.Slice(&Opus_silk_CB_lags_stage3_10_ms[0][0], 2*12)
 			cbk_size = int32(PE_NB_CBKS_STAGE3_10MS)
 		}
 	}
-	min_lag = int32(int16(int32(PE_MIN_LAG_MS))) * int32(int16(Fs_kHz))
-	max_lag = int32(int16(int32(PE_MAX_LAG_MS))) * int32(int16(Fs_kHz))
-	lag = min_lag + int32(lagIndex)
-	k = 0
-	for {
-		if !(k < nb_subfr) {
-			break
-		}
-		*(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) = lag + int32(*(*OpusT_opus_int8)(unsafe.Pointer(Lag_CB_ptr + uintptr(k*cbk_size+int32(contourIndex)))))
-		if min_lag > max_lag {
-			if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) > min_lag {
-				v3 = min_lag
-			} else {
-				if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) < max_lag {
-					v4 = max_lag
-				} else {
-					v4 = *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4))
-				}
-				v3 = v4
-			}
-			v2 = v3
-		} else {
-			if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) > max_lag {
-				v5 = max_lag
-			} else {
-				if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) < min_lag {
-					v6 = min_lag
-				} else {
-					v6 = *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4))
-				}
-				v5 = v6
-			}
-			v2 = v5
-		}
-		*(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) = v2
-		k = k + 1
+	minLag := int32(int16(PE_MIN_LAG_MS)) * int32(int16(Fs_kHz))
+	maxLag := int32(int16(PE_MAX_LAG_MS)) * int32(int16(Fs_kHz))
+	lag := minLag + int32(lagIndex)
+	output := unsafe.Slice(pitch_lags, int(nb_subfr))
+	for k := range output {
+		value := lag + int32(lags[k*int(cbk_size)+int(contourIndex)])
+		// silk_LIMIT accepts bounds in either order.
+		output[k] = min(max(value, min(minLag, maxLag)), max(minLag, maxLag))
 	}
 }
 
