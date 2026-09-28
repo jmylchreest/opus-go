@@ -3,6 +3,7 @@
 package opuscc
 
 import (
+	"math/bits"
 	"reflect"
 	"unsafe"
 
@@ -364,51 +365,35 @@ var silk_resampler_up2_hq_12 = [3]OpusT_opus_int16{
 // C documentation
 //
 //	/* Downsample by a factor 2 */
-func Opus_silk_resampler_down2(tls *libc.TLS, S uintptr, out uintptr, in uintptr, inLen OpusT_opus_int32) {
-	var X, Y, in32, k, len2, out32 OpusT_opus_int32
-	var v2, v3 int32
-	_, _, _, _, _, _, _, _ = X, Y, in32, k, len2, out32, v2, v3
-	len2 = inLen >> int32(1)
+func Opus_silk_resampler_down2(tls *libc.TLS, S *[2]OpusT_opus_int32, out *OpusT_opus_int16, in *OpusT_opus_int16, inLen OpusT_opus_int32) {
+	len2 := int(inLen >> 1)
 	if !(int32(silk_resampler_down2_02) > int32(0)) {
 		Opus_celt_fatal(tls, __ccgo_ts+7522, __ccgo_ts+7567, int32(46))
 	}
 	if !(int32(silk_resampler_down2_12) < int32(0)) {
 		Opus_celt_fatal(tls, __ccgo_ts+7593, __ccgo_ts+7567, int32(47))
 	}
-	/* Internal variables and state are in Q10 format */
-	k = 0
-	for {
-		if !(k < len2) {
-			break
-		}
-		/* Convert to Q10 */
-		in32 = int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k)*2)))) << int32(10))
-		/* All-pass section for even input sample */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S))
-		X = int32(int64(Y) + int64(Y)*int64(silk_resampler_down2_12)>>int32(16))
-		out32 = *(*OpusT_opus_int32)(unsafe.Pointer(S)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = in32 + X
-		/* Convert to Q10 */
-		in32 = int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))) << int32(10))
-		/* All-pass section for odd input sample, and add to output of previous section */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))
-		X = int32(int64(Y) * int64(silk_resampler_down2_02) >> int32(16))
-		out32 = out32 + *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))
-		out32 = out32 + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = in32 + X
-		/* Add, convert back to int16 and store to output */
-		if (out32>>(int32(11)-int32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX19) {
-			v2 = int32(silk_int16_MAX19)
-		} else {
-			if (out32>>(int32(11)-int32(1))+int32(1))>>int32(1) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = (out32>>(int32(11)-int32(1)) + int32(1)) >> int32(1)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(k)*2)) = int16(v2)
-		k = k + 1
+	if len2 <= 0 {
+		return
+	}
+	// Only complete input pairs are consumed, matching C's floor(inLen/2).
+	input := unsafe.Slice(in, 2*len2)
+	output := unsafe.Slice(out, len2)
+	for k := range output {
+		// Internal variables and state are Q10, with 32-bit wraparound.
+		in32 := int32(uint32(int32(input[2*k])) << 10)
+		Y := in32 - S[0]
+		X := int32(int64(Y) + ((int64(Y) * int64(silk_resampler_down2_12)) >> 16))
+		out32 := S[0] + X
+		S[0] = in32 + X
+		in32 = int32(uint32(int32(input[2*k+1])) << 10)
+		Y = in32 - S[1]
+		X = int32((int64(Y) * int64(silk_resampler_down2_02)) >> 16)
+		out32 += S[1]
+		out32 += X
+		S[1] = in32 + X
+		value := ((out32 >> 10) + 1) >> 1
+		output[k] = int16(min(max(value, -32768), 32767))
 	}
 }
 
@@ -1221,10 +1206,7 @@ POSSIBILITY OF SUCH DAMAGE.
 /* Redefine macro functions with extensive assertion in DEBUG mode.
    As functions can't be undefined, this file can't work with SigProcFIX_MacroCount.h */
 
-func Opus_silk_insertion_sort_increasing(tls *libc.TLS, a uintptr, idx uintptr, L int32, K int32) {
-	var i, j int32
-	var value OpusT_opus_int32
-	_, _, _ = i, j, value
+func Opus_silk_insertion_sort_increasing(tls *libc.TLS, a *OpusT_opus_int32, idx *int32, L int32, K int32) {
 	/* Safety checks */
 	if !(K > int32(0)) {
 		Opus_celt_fatal(tls, __ccgo_ts+7711, __ccgo_ts+7735, int32(51))
@@ -1235,84 +1217,44 @@ func Opus_silk_insertion_sort_increasing(tls *libc.TLS, a uintptr, idx uintptr, 
 	if !(L >= K) {
 		Opus_celt_fatal(tls, __ccgo_ts+7774, __ccgo_ts+7735, int32(53))
 	}
-	/* Write start indices in index vector */
-	i = 0
-	for {
-		if !(i < K) {
-			break
-		}
-		*(*int32)(unsafe.Pointer(idx + uintptr(i)*4)) = i
-		i = i + 1
+	values := unsafe.Slice(a, int(L))
+	indices := unsafe.Slice(idx, int(K))
+	for i := range indices {
+		indices[i] = int32(i)
 	}
-	/* Sort vector elements by value, increasing order */
-	i = int32(1)
-	for {
-		if !(i < K) {
-			break
+	for i := 1; i < int(K); i++ {
+		value := values[i]
+		j := i - 1
+		for ; j >= 0 && value < values[j]; j-- {
+			values[j+1], indices[j+1] = values[j], indices[j]
 		}
-		value = *(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(i)*4))
-		j = i - int32(1)
-		for {
-			if !(j >= 0 && value < *(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j)*4))) {
-				break
-			}
-			*(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j+int32(1))*4)) = *(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j)*4)) /* Shift value */
-			*(*int32)(unsafe.Pointer(idx + uintptr(j+int32(1))*4)) = *(*int32)(unsafe.Pointer(idx + uintptr(j)*4))                   /* Shift index */
-			j = j - 1
-		}
-		*(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j+int32(1))*4)) = value /* Write value */
-		*(*int32)(unsafe.Pointer(idx + uintptr(j+int32(1))*4)) = i              /* Write index */
-		i = i + 1
+		values[j+1], indices[j+1] = value, int32(i)
 	}
-	/* If less than L values are asked for, check the remaining values, */
-	/* but only spend CPU to ensure that the K first values are correct */
-	i = K
-	for {
-		if !(i < L) {
-			break
-		}
-		value = *(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(i)*4))
-		if value < *(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(K-int32(1))*4)) {
-			j = K - int32(2)
-			for {
-				if !(j >= 0 && value < *(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j)*4))) {
-					break
-				}
-				*(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j+int32(1))*4)) = *(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j)*4)) /* Shift value */
-				*(*int32)(unsafe.Pointer(idx + uintptr(j+int32(1))*4)) = *(*int32)(unsafe.Pointer(idx + uintptr(j)*4))                   /* Shift index */
-				j = j - 1
+	// Only the first K entries are sorted; the tail is read but not changed.
+	for i := int(K); i < int(L); i++ {
+		value := values[i]
+		if value < values[K-1] {
+			j := int(K) - 2
+			for ; j >= 0 && value < values[j]; j-- {
+				values[j+1], indices[j+1] = values[j], indices[j]
 			}
-			*(*OpusT_opus_int32)(unsafe.Pointer(a + uintptr(j+int32(1))*4)) = value /* Write value */
-			*(*int32)(unsafe.Pointer(idx + uintptr(j+int32(1))*4)) = i              /* Write index */
+			values[j+1], indices[j+1] = value, int32(i)
 		}
-		i = i + 1
 	}
 }
 
-func Opus_silk_insertion_sort_increasing_all_values_int16(tls *libc.TLS, a uintptr, L int32) {
-	var i, j, value int32
-	_, _, _ = i, j, value
-	/* Safety checks */
+func Opus_silk_insertion_sort_increasing_all_values_int16(tls *libc.TLS, a *OpusT_opus_int16, L int32) {
 	if !(L > int32(0)) {
 		Opus_celt_fatal(tls, __ccgo_ts+7750, __ccgo_ts+7735, int32(144))
 	}
-	/* Sort vector elements by value, increasing order */
-	i = int32(1)
-	for {
-		if !(i < L) {
-			break
+	values := unsafe.Slice(a, int(L))
+	for i := 1; i < len(values); i++ {
+		value := values[i]
+		j := i - 1
+		for ; j >= 0 && value < values[j]; j-- {
+			values[j+1] = values[j]
 		}
-		value = int32(*(*OpusT_opus_int16)(unsafe.Pointer(a + uintptr(i)*2)))
-		j = i - int32(1)
-		for {
-			if !(j >= 0 && value < int32(*(*OpusT_opus_int16)(unsafe.Pointer(a + uintptr(j)*2)))) {
-				break
-			}
-			*(*OpusT_opus_int16)(unsafe.Pointer(a + uintptr(j+int32(1))*2)) = *(*OpusT_opus_int16)(unsafe.Pointer(a + uintptr(j)*2)) /* Shift value */
-			j = j - 1
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(a + uintptr(j+int32(1))*2)) = int16(value) /* Write value */
-		i = i + 1
+		values[j+1] = value
 	}
 }
 
@@ -1378,76 +1320,30 @@ POSSIBILITY OF SUCH DAMAGE.
 //
 //	/* Compute number of bits to right shift the sum of squares of a vector */
 //	/* of int16s to make it fit in an int32                                 */
-func Opus_silk_sum_sqr_shift(tls *libc.TLS, energy uintptr, shift uintptr, x uintptr, len1 int32) {
-	var i, shft, v4, v9 int32
-	var nrg, v1, v10, v2, v6, v7 OpusT_opus_int32
-	var nrg_tmp OpusT_opus_uint32
-	_, _, _, _, _, _, _, _, _, _, _ = i, nrg, nrg_tmp, shft, v1, v10, v2, v4, v6, v7, v9
-	/* Do a first run with the maximum shift we could have. */
-	v1 = len1
-	if v1 != 0 {
-		v4 = int32(32) - (int32(4)*int32(CHAR_BIT) - libc.X__builtin_clz(tls, uint32(v1)))
-	} else {
-		v4 = int32(32)
-	}
-	v2 = v4
-	shft = int32(31) - v2
-	/* Let's be conservative with rounding and start with nrg=len. */
-	nrg = len1
-	i = 0
-	for {
-		if !(i < len1-int32(1)) {
-			break
+func Opus_silk_sum_sqr_shift(tls *libc.TLS, energy *OpusT_opus_int32, shift *int32, x *OpusT_opus_int16, len1 int32) {
+	input := unsafe.Slice(x, int(len1))
+	shft := int32(31 - bits.LeadingZeros32(uint32(len1)))
+	// Start conservatively with nrg=len, then recompute with two headroom bits.
+	nrg := len1
+	for pass := 0; pass < 2; pass++ {
+		if pass == 1 {
+			shft = max(0, shft+3-int32(bits.LeadingZeros32(uint32(nrg))))
+			nrg = 0
 		}
-		nrg_tmp = uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg_tmp = uint32(int32(nrg_tmp + uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2)))*int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2))))))
-		nrg = int32(uint32(nrg) + nrg_tmp>>shft)
-		i = i + int32(2)
-	}
-	if i < len1 {
-		/* One sample left to process */
-		nrg_tmp = uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg = int32(uint32(nrg) + nrg_tmp>>shft)
-	}
-	_ = nrg >= int32(0)
-	/* Make sure the result will fit in a 32-bit signed integer with two bits
-	   of headroom. */
-	v1 = nrg
-	if v1 != 0 {
-		v4 = int32(32) - (int32(4)*int32(CHAR_BIT) - libc.X__builtin_clz(tls, uint32(v1)))
-	} else {
-		v4 = int32(32)
-	}
-	v2 = v4
-	v6 = 0
-	v7 = shft + int32(3) - v2
-	if v6 > v7 {
-		v9 = v6
-	} else {
-		v9 = v7
-	}
-	v10 = v9
-	shft = v10
-	nrg = 0
-	i = 0
-	for {
-		if !(i < len1-int32(1)) {
-			break
+		i := 0
+		for ; i+1 < len(input); i += 2 {
+			a, b := int32(input[i]), int32(input[i+1])
+			// The sum of two squares can set bit 31: shift it unsigned.
+			pair := uint32(a*a) + uint32(b*b)
+			nrg = int32(uint32(nrg) + (pair >> shft))
 		}
-		nrg_tmp = uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg_tmp = uint32(int32(nrg_tmp + uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2)))*int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2))))))
-		nrg = int32(uint32(nrg) + nrg_tmp>>shft)
-		i = i + int32(2)
+		if i < len(input) {
+			a := int32(input[i])
+			nrg = int32(uint32(nrg) + (uint32(a*a) >> shft))
+		}
 	}
-	if i < len1 {
-		/* One sample left to process */
-		nrg_tmp = uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg = int32(uint32(nrg) + nrg_tmp>>shft)
-	}
-	_ = nrg >= int32(0)
-	/* Output arguments */
-	*(*int32)(unsafe.Pointer(shift)) = shft
-	*(*OpusT_opus_int32)(unsafe.Pointer(energy)) = nrg
+	*shift = shft
+	*energy = nrg
 }
 
 // C documentation

@@ -50,8 +50,8 @@ func Opus_silk_NLSF2A(tls *libc.TLS, a_Q12 uintptr, NLSF uintptr, d int32, arch 
 	}
 	dd = d >> int32(1)
 	/* generate even and odd polynomials using convolution */
-	silk_NLSF2A_find_poly(tls, uintptr(unsafe.Pointer(&P[0])), uintptr(unsafe.Pointer(&cos_LSF_QA[0])), dd)
-	silk_NLSF2A_find_poly(tls, uintptr(unsafe.Pointer(&Q[0])), uintptr(unsafe.Pointer(&cos_LSF_QA[1])), dd)
+	silk_NLSF2A_find_poly(tls, &P[0], &cos_LSF_QA[0], dd)
+	silk_NLSF2A_find_poly(tls, &Q[0], &cos_LSF_QA[1], dd)
 	/* convert even and odd polynomials to opus_int32 Q12 filter coefs */
 	k = 0
 	for {
@@ -74,7 +74,7 @@ func Opus_silk_NLSF2A(tls *libc.TLS, a_Q12 uintptr, NLSF uintptr, d int32, arch 
 		}
 		/* Prediction coefficients are (too close to) unstable; apply bandwidth expansion   */
 		/* on the unscaled coefficients, convert to Q12 and measure again                   */
-		Opus_silk_bwexpander_32(tls, uintptr(unsafe.Pointer(&a32_QA1[0])), d, int32(65536)-int32(uint32(int32(2))<<i))
+		Opus_silk_bwexpander_32(tls, &a32_QA1[0], d, int32(65536)-int32(uint32(int32(2))<<i))
 		k = 0
 		for {
 			if !(k < d) {
@@ -300,7 +300,7 @@ func Opus_silk_NLSF_stabilize(tls *libc.TLS, NLSF_Q15 uintptr, NDeltaMin_Q15 uin
 		/* Insertion sort (fast for already almost sorted arrays):   */
 		/* Best case:  O(n)   for an already sorted array            */
 		/* Worst case: O(n^2) for an inversely sorted array          */
-		Opus_silk_insertion_sort_increasing_all_values_int16(tls, NLSF_Q15, L)
+		Opus_silk_insertion_sort_increasing_all_values_int16(tls, (*OpusT_opus_int16)(unsafe.Pointer(NLSF_Q15)), L)
 		/* First NLSF should be no less than NDeltaMin[0] */
 		v5 = int32(*(*OpusT_opus_int16)(unsafe.Pointer(NLSF_Q15)))
 		v6 = int32(*(*OpusT_opus_int16)(unsafe.Pointer(NDeltaMin_Q15)))

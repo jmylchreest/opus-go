@@ -177,55 +177,30 @@ var A_fb1_21 = int16(-int32(24290)) /* (opus_int16)(20623 << 1) */
 // C documentation
 //
 //	/* Split signal into two decimated bands using first-order allpass filters */
-func Opus_silk_ana_filt_bank_1(tls *libc.TLS, in uintptr, S uintptr, outL uintptr, outH uintptr, N OpusT_opus_int32) {
-	var N2, k, v2, v3 int32
-	var X, Y, in32, out_1, out_2 OpusT_opus_int32
-	_, _, _, _, _, _, _, _, _ = N2, X, Y, in32, k, out_1, out_2, v2, v3
-	N2 = N >> int32(1)
-	/* Internal variables and state are in Q10 format */
-	k = 0
-	for {
-		if !(k < N2) {
-			break
-		}
-		/* Convert to Q10 */
-		in32 = int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k)*2)))) << int32(10))
-		/* All-pass section for even input sample */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S))
-		X = int32(int64(Y) + int64(Y)*int64(A_fb1_21)>>int32(16))
-		out_1 = *(*OpusT_opus_int32)(unsafe.Pointer(S)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = in32 + X
-		/* Convert to Q10 */
-		in32 = int32(uint32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))) << int32(10))
-		/* All-pass section for odd input sample, and add to output of previous section */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))
-		X = int32(int64(Y) * int64(A_fb1_20) >> int32(16))
-		out_2 = *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = in32 + X
-		/* Add/subtract, convert back to int16 and store to output */
-		if ((out_2+out_1)>>(int32(11)-int32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if ((out_2+out_1)>>(int32(11)-int32(1))+int32(1))>>int32(1) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = ((out_2+out_1)>>(int32(11)-int32(1)) + int32(1)) >> int32(1)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(outL + uintptr(k)*2)) = int16(v2)
-		if ((out_2-out_1)>>(int32(11)-int32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if ((out_2-out_1)>>(int32(11)-int32(1))+int32(1))>>int32(1) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = ((out_2-out_1)>>(int32(11)-int32(1)) + int32(1)) >> int32(1)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(outH + uintptr(k)*2)) = int16(v2)
-		k = k + 1
+func Opus_silk_ana_filt_bank_1(tls *libc.TLS, in *OpusT_opus_int16, S *[2]OpusT_opus_int32, outL *OpusT_opus_int16, outH *OpusT_opus_int16, N OpusT_opus_int32) {
+	n := int(N >> 1)
+	if n <= 0 {
+		return
+	}
+	input := unsafe.Slice(in, 2*n)
+	low, high := unsafe.Slice(outL, n), unsafe.Slice(outH, n)
+	for k := range low {
+		// Q10 all-pass sections; consume both inputs before in-place output.
+		in32 := int32(uint32(int32(input[2*k])) << 10)
+		Y := in32 - S[0]
+		X := int32(int64(Y) + ((int64(Y) * int64(A_fb1_21)) >> 16))
+		out1 := S[0] + X
+		S[0] = in32 + X
+		in32 = int32(uint32(int32(input[2*k+1])) << 10)
+		Y = in32 - S[1]
+		X = int32((int64(Y) * int64(A_fb1_20)) >> 16)
+		out2 := S[1] + X
+		S[1] = in32 + X
+		// Round and saturate after the 32-bit sum/difference, as in C.
+		lo := (((out2 + out1) >> 10) + 1) >> 1
+		hi := (((out2 - out1) >> 10) + 1) >> 1
+		low[k] = int16(min(max(lo, -32768), 32767))
+		high[k] = int16(min(max(hi, -32768), 32767))
 	}
 }
 
@@ -290,99 +265,60 @@ POSSIBILITY OF SUCH DAMAGE.
 // C documentation
 //
 //	/* Second order ARMA filter, alternative implementation */
-func Opus_silk_biquad_alt_stride1(tls *libc.TLS, in uintptr, B_Q28 uintptr, A_Q28 uintptr, S uintptr, out uintptr, len1 OpusT_opus_int32) {
-	var A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28, inval, out32_Q14 OpusT_opus_int32
-	var k, v2, v3 int32
-	_, _, _, _, _, _, _, _, _ = A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28, inval, k, out32_Q14, v2, v3
-	/* Negate A_Q28 values and split in two parts */
-	A0_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) & int32(0x00003FFF)       /* lower part */
-	A0_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) >> int32(14)              /* upper part */
-	A1_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) & int32(0x00003FFF) /* lower part */
-	A1_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) >> int32(14)        /* upper part */
-	k = 0
-	for {
-		if !(k < len1) {
-			break
-		}
-		/* S[ 0 ], S[ 1 ]: Q12 */
-		inval = int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(k)*2)))
-		out32_Q14 = int32(uint32(int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S)))+int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28)))*int64(int16(inval))>>int32(16))) << int32(2))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) + (int32(int64(out32_Q14)*int64(int16(A0_L_Q28))>>int32(16))>>(int32(14)-int32(1))+int32(1))>>int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(out32_Q14)*int64(int16(A0_U_Q28))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 1*4)))*int64(int16(inval))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = (int32(int64(out32_Q14)*int64(int16(A1_L_Q28))>>int32(16))>>(int32(14)-int32(1)) + int32(1)) >> int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(out32_Q14)*int64(int16(A1_U_Q28))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 2*4)))*int64(int16(inval))>>int32(16))
-		/* Scale back to Q0 and saturate */
-		if (out32_Q14+int32(1)<<int32(14)-int32(1))>>int32(14) > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if (out32_Q14+int32(1)<<int32(14)-int32(1))>>int32(14) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = (out32_Q14 + int32(1)<<int32(14) - int32(1)) >> int32(14)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(k)*2)) = int16(v2)
-		k = k + 1
+func Opus_silk_biquad_alt_stride1(tls *libc.TLS, in *OpusT_opus_int16, B_Q28 *[3]OpusT_opus_int32, A_Q28 *[2]OpusT_opus_int32, S *[2]OpusT_opus_int32, out *OpusT_opus_int16, len1 OpusT_opus_int32) {
+	// Negate and split AR coefficients exactly as silk/biquad_alt.c does.
+	A0_L_Q28, A0_U_Q28 := -A_Q28[0]&0x3fff, -A_Q28[0]>>14
+	A1_L_Q28, A1_U_Q28 := -A_Q28[1]&0x3fff, -A_Q28[1]>>14
+	if len1 <= 0 {
+		return
+	}
+	input := unsafe.Slice(in, int(len1))
+	output := unsafe.Slice(out, int(len1))
+	for k, sample := range input {
+		inval := int64(sample)
+		out32_Q14 := int32(uint32(int32(int64(S[0])+((int64(B_Q28[0])*inval)>>16))) << 2)
+		// Preserve signed 16-bit coefficient narrowing and each rounded shift.
+		low0 := int32((int64(out32_Q14) * int64(int16(A0_L_Q28))) >> 16)
+		S[0] = S[1] + (((low0 >> 13) + 1) >> 1)
+		S[0] = int32(int64(S[0]) + ((int64(out32_Q14) * int64(int16(A0_U_Q28))) >> 16))
+		S[0] = int32(int64(S[0]) + ((int64(B_Q28[1]) * inval) >> 16))
+		low1 := int32((int64(out32_Q14) * int64(int16(A1_L_Q28))) >> 16)
+		S[1] = ((low1 >> 13) + 1) >> 1
+		S[1] = int32(int64(S[1]) + ((int64(out32_Q14) * int64(int16(A1_U_Q28))) >> 16))
+		S[1] = int32(int64(S[1]) + ((int64(B_Q28[2]) * inval) >> 16))
+		value := (out32_Q14 + (1 << 14) - 1) >> 14
+		output[k] = int16(min(max(value, -32768), 32767))
 	}
 }
 
-func Opus_silk_biquad_alt_stride2_c(tls *libc.TLS, in uintptr, B_Q28 uintptr, A_Q28 uintptr, S uintptr, out uintptr, len1 OpusT_opus_int32) {
-	var A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28 OpusT_opus_int32
-	var k, v2, v3 int32
-	var out32_Q14 [2]OpusT_opus_int32
-	_, _, _, _, _, _, _, _ = A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28, k, out32_Q14, v2, v3
-	/* Negate A_Q28 values and split in two parts */
-	A0_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) & int32(0x00003FFF)       /* lower part */
-	A0_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) >> int32(14)              /* upper part */
-	A1_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) & int32(0x00003FFF) /* lower part */
-	A1_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) >> int32(14)        /* upper part */
-	k = 0
-	for {
-		if !(k < len1) {
-			break
+func Opus_silk_biquad_alt_stride2_c(tls *libc.TLS, in *OpusT_opus_int16, B_Q28 *[3]OpusT_opus_int32, A_Q28 *[2]OpusT_opus_int32, S *[4]OpusT_opus_int32, out *OpusT_opus_int16, len1 OpusT_opus_int32) {
+	A0_L_Q28, A0_U_Q28 := -A_Q28[0]&0x3fff, -A_Q28[0]>>14
+	A1_L_Q28, A1_U_Q28 := -A_Q28[1]&0x3fff, -A_Q28[1]>>14
+	if len1 <= 0 {
+		return
+	}
+	input := unsafe.Slice(in, 2*int(len1))
+	output := unsafe.Slice(out, 2*int(len1))
+	for k := 0; k < int(len1); k++ {
+		// Read both inputs before either output is written, as in C.
+		pair := [2]int16{input[2*k], input[2*k+1]}
+		var result [2]int16
+		for channel, sample := range pair {
+			j := 2 * channel // Independent Q12 state pairs: [0,1] and [2,3].
+			inval := int64(sample)
+			out32_Q14 := int32(uint32(int32(int64(S[j])+((int64(B_Q28[0])*inval)>>16))) << 2)
+			low0 := int32((int64(out32_Q14) * int64(int16(A0_L_Q28))) >> 16)
+			S[j] = S[j+1] + (((low0 >> 13) + 1) >> 1)
+			S[j] = int32(int64(S[j]) + ((int64(out32_Q14) * int64(int16(A0_U_Q28))) >> 16))
+			S[j] = int32(int64(S[j]) + ((int64(B_Q28[1]) * inval) >> 16))
+			low1 := int32((int64(out32_Q14) * int64(int16(A1_L_Q28))) >> 16)
+			S[j+1] = ((low1 >> 13) + 1) >> 1
+			S[j+1] = int32(int64(S[j+1]) + ((int64(out32_Q14) * int64(int16(A1_U_Q28))) >> 16))
+			S[j+1] = int32(int64(S[j+1]) + ((int64(B_Q28[2]) * inval) >> 16))
+			value := (out32_Q14 + (1 << 14) - 1) >> 14
+			result[channel] = int16(min(max(value, -32768), 32767))
 		}
-		/* S[ 0 ], S[ 1 ], S[ 2 ], S[ 3 ]: Q12 */
-		out32_Q14[0] = int32(uint32(int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S)))+int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+0)*2)))>>int32(16))) << int32(2))
-		out32_Q14[int32(1)] = int32(uint32(int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)))+int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))>>int32(16))) << int32(2))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) + (int32(int64(out32_Q14[0])*int64(int16(A0_L_Q28))>>int32(16))>>(int32(14)-int32(1))+int32(1))>>int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) = *(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) + (int32(int64(out32_Q14[int32(1)])*int64(int16(A0_L_Q28))>>int32(16))>>(int32(14)-int32(1))+int32(1))>>int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(out32_Q14[0])*int64(int16(A0_U_Q28))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4))) + int64(out32_Q14[int32(1)])*int64(int16(A0_U_Q28))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 1*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+0)*2)))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 1*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = (int32(int64(out32_Q14[0])*int64(int16(A1_L_Q28))>>int32(16))>>(int32(14)-int32(1)) + int32(1)) >> int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) = (int32(int64(out32_Q14[int32(1)])*int64(int16(A1_L_Q28))>>int32(16))>>(int32(14)-int32(1)) + int32(1)) >> int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(out32_Q14[0])*int64(int16(A1_U_Q28))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4))) + int64(out32_Q14[int32(1)])*int64(int16(A1_U_Q28))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 2*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+0)*2)))>>int32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 2*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))>>int32(16))
-		/* Scale back to Q0 and saturate */
-		if (out32_Q14[0]+int32(1)<<int32(14)-int32(1))>>int32(14) > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if (out32_Q14[0]+int32(1)<<int32(14)-int32(1))>>int32(14) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = (out32_Q14[0] + int32(1)<<int32(14) - int32(1)) >> int32(14)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(int32(2)*k+0)*2)) = int16(v2)
-		if (out32_Q14[int32(1)]+int32(1)<<int32(14)-int32(1))>>int32(14) > int32(silk_int16_MAX11) {
-			v2 = int32(silk_int16_MAX11)
-		} else {
-			if (out32_Q14[int32(1)]+int32(1)<<int32(14)-int32(1))>>int32(14) < int32(int16(-32768)) {
-				v3 = int32(int16(-32768))
-			} else {
-				v3 = (out32_Q14[int32(1)] + int32(1)<<int32(14) - int32(1)) >> int32(14)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(int32(2)*k+int32(1))*2)) = int16(v2)
-		k = k + 1
+		output[2*k], output[2*k+1] = result[0], result[1]
 	}
 }
 
@@ -450,21 +386,15 @@ POSSIBILITY OF SUCH DAMAGE.
 //
 //	/* Chirp (bandwidth expand) LP AR filter.
 //	   This logic is reused in _celt_lpc(). Any bug fixes should also be applied there. */
-func Opus_silk_bwexpander_32(tls *libc.TLS, ar uintptr, d int32, chirp_Q16 OpusT_opus_int32) {
-	var chirp_minus_one_Q16 OpusT_opus_int32
-	var i int32
-	_, _ = chirp_minus_one_Q16, i
-	chirp_minus_one_Q16 = chirp_Q16 - int32(65536)
-	i = 0
-	for {
-		if !(i < d-int32(1)) {
-			break
-		}
-		*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(i)*4)) = int32(int64(chirp_Q16) * int64(*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(i)*4))) >> int32(16))
-		chirp_Q16 = chirp_Q16 + (chirp_Q16*chirp_minus_one_Q16>>(int32(16)-int32(1))+int32(1))>>int32(1)
-		i = i + 1
+func Opus_silk_bwexpander_32(tls *libc.TLS, ar *OpusT_opus_int32, d int32, chirp_Q16 OpusT_opus_int32) {
+	// As in C, d must be positive.
+	coefs := unsafe.Slice(ar, int(d))
+	chirp_minus_one_Q16 := chirp_Q16 - 65536
+	for i := 0; i < int(d)-1; i++ {
+		coefs[i] = int32((int64(chirp_Q16) * int64(coefs[i])) >> 16)
+		chirp_Q16 += ((chirp_Q16 * chirp_minus_one_Q16 >> 15) + 1) >> 1
 	}
-	*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(d-int32(1))*4)) = int32(int64(chirp_Q16) * int64(*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(d-int32(1))*4))) >> int32(16))
+	coefs[d-1] = int32((int64(chirp_Q16) * int64(coefs[d-1])) >> 16)
 }
 
 /***********************************************************************
@@ -528,23 +458,16 @@ POSSIBILITY OF SUCH DAMAGE.
 // C documentation
 //
 //	/* Chirp (bandwidth expand) LP AR filter */
-func Opus_silk_bwexpander(tls *libc.TLS, ar uintptr, d int32, chirp_Q16 OpusT_opus_int32) {
-	var chirp_minus_one_Q16 OpusT_opus_int32
-	var i int32
-	_, _ = chirp_minus_one_Q16, i
-	chirp_minus_one_Q16 = chirp_Q16 - int32(65536)
-	/* NB: Dont use silk_SMULWB, instead of silk_RSHIFT_ROUND( silk_MUL(), 16 ), below.  */
-	/* Bias in silk_SMULWB can lead to unstable filters                                */
-	i = 0
-	for {
-		if !(i < d-int32(1)) {
-			break
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(i)*2)) = int16((chirp_Q16*int32(*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(i)*2)))>>(int32(16)-int32(1)) + int32(1)) >> int32(1))
-		chirp_Q16 = chirp_Q16 + (chirp_Q16*chirp_minus_one_Q16>>(int32(16)-int32(1))+int32(1))>>int32(1)
-		i = i + 1
+func Opus_silk_bwexpander(tls *libc.TLS, ar *OpusT_opus_int16, d int32, chirp_Q16 OpusT_opus_int32) {
+	// As in C, d must be positive. Keep RSHIFT_ROUND rather than SMULWB:
+	// changing the rounding bias can produce unstable filters.
+	coefs := unsafe.Slice(ar, int(d))
+	chirp_minus_one_Q16 := chirp_Q16 - 65536
+	for i := 0; i < int(d)-1; i++ {
+		coefs[i] = int16(((chirp_Q16 * int32(coefs[i]) >> 15) + 1) >> 1)
+		chirp_Q16 += ((chirp_Q16 * chirp_minus_one_Q16 >> 15) + 1) >> 1
 	}
-	*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(d-int32(1))*2)) = int16((chirp_Q16*int32(*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(d-int32(1))*2)))>>(int32(16)-int32(1)) + int32(1)) >> int32(1))
+	coefs[d-1] = int16(((chirp_Q16 * int32(coefs[d-1]) >> 15) + 1) >> 1)
 }
 
 /* config_ccgo.h
@@ -1882,7 +1805,7 @@ func Opus_silk_LPC_fit(tls *libc.TLS, a_QOUT uintptr, a_QIN uintptr, QOUT int32,
 			}
 			maxabs = v3 /* ( silk_int32_MAX >> 14 ) + silk_int16_MAX = 163838 */
 			chirp_Q16 = int32(65470) - int32(uint32(maxabs-int32(silk_int16_MAX15))<<int32(14))/(maxabs*(idx+int32(1))>>int32(2))
-			Opus_silk_bwexpander_32(tls, a_QIN, d, chirp_Q16)
+			Opus_silk_bwexpander_32(tls, (*OpusT_opus_int32)(unsafe.Pointer(a_QIN)), d, chirp_Q16)
 		} else {
 			break
 		}
@@ -1948,29 +1871,21 @@ const QA1 = 16
 // C documentation
 //
 //	/* helper function for NLSF2A(..) */
-func silk_NLSF2A_find_poly(tls *libc.TLS, out uintptr, cLSF uintptr, dd int32) {
-	var ftmp OpusT_opus_int32
-	var k, n int32
-	_, _, _ = ftmp, k, n
-	*(*OpusT_opus_int32)(unsafe.Pointer(out)) = int32(uint32(int32(1)) << int32(QA1))
-	*(*OpusT_opus_int32)(unsafe.Pointer(out + 1*4)) = -*(*OpusT_opus_int32)(unsafe.Pointer(cLSF))
-	k = int32(1)
-	for {
-		if !(k < dd) {
-			break
+func silk_NLSF2A_find_poly(tls *libc.TLS, out *OpusT_opus_int32, cLSF *OpusT_opus_int32, dd int32) {
+	// C requires a positive polynomial order. Only every second LSF is read;
+	// the odd-offset caller has just 2*dd-1 elements available.
+	poly := unsafe.Slice(out, int(dd)+1)
+	lsf := unsafe.Slice(cLSF, 2*int(dd)-1)
+	poly[0] = 1 << QA1
+	poly[1] = -lsf[0]
+	for k := 1; k < int(dd); k++ {
+		ftmp := lsf[2*k]
+		// Preserve silk_RSHIFT_ROUND64, including rounding negative products.
+		poly[k+1] = int32(uint32(poly[k-1])<<1) - int32(((int64(ftmp)*int64(poly[k])>>(QA1-1))+1)>>1)
+		for n := k; n > 1; n-- {
+			poly[n] += poly[n-2] - int32(((int64(ftmp)*int64(poly[n-1])>>(QA1-1))+1)>>1)
 		}
-		ftmp = *(*OpusT_opus_int32)(unsafe.Pointer(cLSF + uintptr(int32(2)*k)*4)) /* QA*/
-		*(*OpusT_opus_int32)(unsafe.Pointer(out + uintptr(k+int32(1))*4)) = int32(uint32(*(*OpusT_opus_int32)(unsafe.Pointer(out + uintptr(k-int32(1))*4)))<<int32(1)) - int32((int64(ftmp)*int64(*(*OpusT_opus_int32)(unsafe.Pointer(out + uintptr(k)*4)))>>(int32(QA1)-int32(1))+int64(1))>>int32(1))
-		n = k
-		for {
-			if !(n > int32(1)) {
-				break
-			}
-			*(*OpusT_opus_int32)(unsafe.Pointer(out + uintptr(n)*4)) += *(*OpusT_opus_int32)(unsafe.Pointer(out + uintptr(n-int32(2))*4)) - int32((int64(ftmp)*int64(*(*OpusT_opus_int32)(unsafe.Pointer(out + uintptr(n-int32(1))*4)))>>(int32(QA1)-int32(1))+int64(1))>>int32(1))
-			n = n - 1
-		}
-		*(*OpusT_opus_int32)(unsafe.Pointer(out + 1*4)) -= ftmp
-		k = k + 1
+		poly[1] -= ftmp
 	}
 }
 

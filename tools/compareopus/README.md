@@ -101,8 +101,23 @@ Full `x-gogeta.wav` with local libopus 1.6.1 and default settings:
 - Fails the default 1% threshold; would pass an explicitly chosen 2% threshold.
 
 Opt-in native tests cover exact silence encodings, mono/stereo, partial frames,
-exact frame boundaries, and limited-input delay flushing:
+exact frame boundaries, and limited-input delay flushing. They also compare
+converted helpers directly against the local C library: packet headers, entropy
+lookups, interpolation (both Go codecs), sorting, bandwidth expansion, biquad
+filters, downsampling, limiting, vector renormalization, float-to-PCM conversion,
+two-band analysis filtering, sum-of-squares energy, and variable low-pass cutoff.
+The cutoff test compares PCM and state at every transition position in both
+directions; its static tap helper also has exhaustive Q16 interpolation tests
+in `opuscc`.
+
+Integer helper comparisons are exact. Renormalization must exactly match a C
+implementation of the scalar formula from `vq.c`/`pitch.h`. The linked native
+build presumes SSE even with `arch=0`, so its different accumulation order is
+checked separately with a relative bound of eight float32 machine epsilons
+(about 9.54e-7). The initial maximum observed relative difference was 4.56e-7.
+Run that test with `-v` to see the measured difference:
 
 ```sh
 go test -tags compareopus ./tools/compareopus
+go test -tags compareopus ./tools/compareopus -run TestRenormaliseAgainstC -v
 ```

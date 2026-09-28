@@ -1075,7 +1075,7 @@ func Opus_opus_pcm_soft_clip_impl(tls *libc.TLS, _x uintptr, N int32, C int32, d
 	      - Optimization hint to skip per-sample out-of-bound checks.
 	        If true, the check can be skipped. */
 	_ = arch
-	all_within_neg1pos1 = Opus_opus_limit2_checkwithin1_c(tls, _x, N*C)
+	all_within_neg1pos1 = Opus_opus_limit2_checkwithin1_c(tls, (*float32)(unsafe.Pointer(_x)), N*C)
 	c = 0
 	for {
 		if !(c < C) {
@@ -2313,7 +2313,7 @@ func Opus_opus_decoder_get_size(tls *libc.TLS, channels int32) (r int32) {
 	if channels < int32(1) || channels > int32(2) {
 		return 0
 	}
-	ret = Opus_silk_Get_Decoder_Size(tls, uintptr(unsafe.Pointer(&silkDecSizeBytes)))
+	ret = Opus_silk_Get_Decoder_Size(tls, &silkDecSizeBytes)
 	if ret != 0 {
 		return 0
 	}
@@ -2336,7 +2336,7 @@ func Opus_opus_decoder_init(tls *libc.TLS, st uintptr, Fs OpusT_opus_int32, chan
 	}
 	libc.Xmemset(tls, st, 0, uint64(uint32(Opus_opus_decoder_get_size(tls, channels)))*uint64(1))
 	/* Initialize SILK decoder */
-	ret = Opus_silk_Get_Decoder_Size(tls, uintptr(unsafe.Pointer(&silkDecSizeBytes)))
+	ret = Opus_silk_Get_Decoder_Size(tls, &silkDecSizeBytes)
 	if ret != 0 {
 		return -int32(3)
 	}
@@ -3606,7 +3606,7 @@ func Opus_opus_decode(tls *libc.TLS, st1 uintptr, data uintptr, len1 OpusT_opus_
 	ret = Opus_opus_decode_native(tls, st1, data, len1, out, frame_size, decode_fec, 0, uintptr(uint32(0)), int32(OPTIONAL_CLIP), uintptr(uint32(0)), 0)
 	if ret > 0 {
 		_ = (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Farch
-		Opus_celt_float2int16_c(tls, out, pcm, ret*(*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels)
+		Opus_celt_float2int16_c(tls, (*float32)(unsafe.Pointer(out)), (*int16)(unsafe.Pointer(pcm)), ret*(*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels)
 	}
 	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
 	if !(st != 0) {
@@ -4218,10 +4218,9 @@ var tapset_icdf2 = [3]uint8{
    POSSIBILITY OF SUCH DAMAGE.
 */
 
-func Opus_validate_layout(tls *libc.TLS, layout uintptr) (r int32) {
+func Opus_validate_layout(tls *libc.TLS, channelLayout *OpusT_ChannelLayout) (r int32) {
 	var i, max_channel int32
 	_, _ = i, max_channel
-	channelLayout := (*OpusT_ChannelLayout)(unsafe.Pointer(layout))
 	max_channel = channelLayout.Fnb_streams + channelLayout.Fnb_coupled_streams
 	if max_channel > int32(255) {
 		return 0
@@ -4239,67 +4238,43 @@ func Opus_validate_layout(tls *libc.TLS, layout uintptr) (r int32) {
 	return int32(1)
 }
 
-func Opus_get_left_channel(tls *libc.TLS, layout uintptr, stream_id int32, prev int32) (r int32) {
-	var i, v1 int32
-	_, _ = i, v1
-	if prev < 0 {
-		v1 = 0
-	} else {
-		v1 = prev + int32(1)
+func Opus_get_left_channel(tls *libc.TLS, layout *OpusT_ChannelLayout, stream_id int32, prev int32) (r int32) {
+	var i int32
+	if prev >= 0 {
+		i = prev + 1
 	}
-	i = v1
-	for {
-		if !(i < (*OpusT_ChannelLayout)(unsafe.Pointer(layout)).Fnb_channels) {
-			break
-		}
-		if int32(*(*uint8)(unsafe.Pointer(layout + 12 + uintptr(i)))) == stream_id*int32(2) {
+	for ; i < layout.Fnb_channels; i++ {
+		if int32(layout.Fmapping[i]) == stream_id*2 {
 			return i
 		}
-		i = i + 1
 	}
-	return -int32(1)
+	return -1
 }
 
-func Opus_get_right_channel(tls *libc.TLS, layout uintptr, stream_id int32, prev int32) (r int32) {
-	var i, v1 int32
-	_, _ = i, v1
-	if prev < 0 {
-		v1 = 0
-	} else {
-		v1 = prev + int32(1)
+func Opus_get_right_channel(tls *libc.TLS, layout *OpusT_ChannelLayout, stream_id int32, prev int32) (r int32) {
+	var i int32
+	if prev >= 0 {
+		i = prev + 1
 	}
-	i = v1
-	for {
-		if !(i < (*OpusT_ChannelLayout)(unsafe.Pointer(layout)).Fnb_channels) {
-			break
-		}
-		if int32(*(*uint8)(unsafe.Pointer(layout + 12 + uintptr(i)))) == stream_id*int32(2)+int32(1) {
+	for ; i < layout.Fnb_channels; i++ {
+		if int32(layout.Fmapping[i]) == stream_id*2+1 {
 			return i
 		}
-		i = i + 1
 	}
-	return -int32(1)
+	return -1
 }
 
-func Opus_get_mono_channel(tls *libc.TLS, layout uintptr, stream_id int32, prev int32) (r int32) {
-	var i, v1 int32
-	_, _ = i, v1
-	if prev < 0 {
-		v1 = 0
-	} else {
-		v1 = prev + int32(1)
+func Opus_get_mono_channel(tls *libc.TLS, layout *OpusT_ChannelLayout, stream_id int32, prev int32) (r int32) {
+	var i int32
+	if prev >= 0 {
+		i = prev + 1
 	}
-	i = v1
-	for {
-		if !(i < (*OpusT_ChannelLayout)(unsafe.Pointer(layout)).Fnb_channels) {
-			break
-		}
-		if int32(*(*uint8)(unsafe.Pointer(layout + 12 + uintptr(i)))) == stream_id+(*OpusT_ChannelLayout)(unsafe.Pointer(layout)).Fnb_coupled_streams {
+	for ; i < layout.Fnb_channels; i++ {
+		if int32(layout.Fmapping[i]) == stream_id+layout.Fnb_coupled_streams {
 			return i
 		}
-		i = i + 1
 	}
-	return -int32(1)
+	return -1
 }
 
 var trim_icdf3 = [11]uint8{
@@ -4357,7 +4332,7 @@ var tapset_icdf3 = [3]uint8{
 /* DECODER */
 
 func validate_ms_decoder(tls *libc.TLS, st uintptr) {
-	Opus_validate_layout(tls, st)
+	Opus_validate_layout(tls, &(*OpusT_OpusMSDecoder)(unsafe.Pointer(st)).Flayout)
 }
 
 func Opus_opus_multistream_decoder_get_size(tls *libc.TLS, nb_streams int32, nb_coupled_streams int32) (r OpusT_opus_int32) {
@@ -4399,7 +4374,7 @@ func Opus_opus_multistream_decoder_init(tls *libc.TLS, st uintptr, Fs OpusT_opus
 		layout.Fmapping[i1] = *(*uint8)(unsafe.Pointer(mapping + uintptr(i1)))
 		i1 = i1 + 1
 	}
-	if !(Opus_validate_layout(tls, st) != 0) {
+	if !(Opus_validate_layout(tls, layout) != 0) {
 		return -int32(1)
 	}
 	alignment = uint32(uint64(uintptr(uint32(0)) + 8))
@@ -4790,7 +4765,7 @@ func Opus_opus_multistream_decode_native(tls *libc.TLS, st1 uintptr, data uintpt
 			prev = -int32(1)
 			/* Copy "left" audio to the channel(s) where it belongs */
 			for {
-				v31 = Opus_get_left_channel(tls, st1, s, prev)
+				v31 = Opus_get_left_channel(tls, &(*OpusT_OpusMSDecoder)(unsafe.Pointer(st1)).Flayout, s, prev)
 				chan1 = v31
 				if !(v31 != -int32(1)) {
 					break
@@ -4801,7 +4776,7 @@ func Opus_opus_multistream_decode_native(tls *libc.TLS, st1 uintptr, data uintpt
 			prev = -int32(1)
 			/* Copy "right" audio to the channel(s) where it belongs */
 			for {
-				v31 = Opus_get_right_channel(tls, st1, s, prev)
+				v31 = Opus_get_right_channel(tls, &(*OpusT_OpusMSDecoder)(unsafe.Pointer(st1)).Flayout, s, prev)
 				chan1 = v31
 				if !(v31 != -int32(1)) {
 					break
@@ -4813,7 +4788,7 @@ func Opus_opus_multistream_decode_native(tls *libc.TLS, st1 uintptr, data uintpt
 			prev1 = -int32(1)
 			/* Copy audio to the channel(s) where it belongs */
 			for {
-				v31 = Opus_get_mono_channel(tls, st1, s, prev1)
+				v31 = Opus_get_mono_channel(tls, &(*OpusT_OpusMSDecoder)(unsafe.Pointer(st1)).Flayout, s, prev1)
 				chan11 = v31
 				if !(v31 != -int32(1)) {
 					break
@@ -5944,19 +5919,14 @@ func Opus_opus_extension_iterator_init(tls *libc.TLS, iter uintptr, data uintptr
 //
 //	/* Reset the iterator so it can start iterating again from the first
 //	    extension. */
-func Opus_opus_extension_iterator_reset(tls *libc.TLS, iter uintptr) {
-	var v1 uintptr
-	var v2 int32
-	_, _ = v1, v2
-	v1 = (*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Fdata
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Fcurr_data = v1
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Frepeat_data = v1
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Flast_long = uintptr(uint32(0))
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Fcurr_len = (*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Flen1
-	v2 = int32(0)
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Fcurr_frame = v2
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Frepeat_frame = v2
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Ftrailing_short_len = 0
+func Opus_opus_extension_iterator_reset(tls *libc.TLS, iter *OpusT_OpusExtensionIterator) {
+	iter.Fcurr_data = iter.Fdata
+	iter.Frepeat_data = iter.Fdata
+	iter.Flast_long = 0
+	iter.Fcurr_len = iter.Flen1
+	iter.Fcurr_frame = 0
+	iter.Frepeat_frame = 0
+	iter.Ftrailing_short_len = 0
 }
 
 // C documentation
@@ -5965,8 +5935,8 @@ func Opus_opus_extension_iterator_reset(tls *libc.TLS, iter uintptr) {
 //	    frame_max or larger.
 //	   This can allow it to stop iterating early if these extensions are not
 //	    needed. */
-func Opus_opus_extension_iterator_set_frame_max(tls *libc.TLS, iter uintptr, frame_max int32) {
-	(*OpusT_OpusExtensionIterator)(unsafe.Pointer(iter)).Fframe_max = frame_max
+func Opus_opus_extension_iterator_set_frame_max(tls *libc.TLS, iter *OpusT_OpusExtensionIterator, frame_max int32) {
+	iter.Fframe_max = frame_max
 }
 
 // C documentation
