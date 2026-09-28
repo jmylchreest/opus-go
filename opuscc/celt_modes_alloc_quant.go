@@ -138,40 +138,21 @@ POSSIBILITY OF SUCH DAMAGE.
 /* Redefine macro functions with extensive assertion in DEBUG mode.
    As functions can't be undefined, this file can't work with SigProcFIX_MacroCount.h */
 
-func exp_rotation1(tls *libc.TLS, X uintptr, len1 int32, stride int32, c OpusT_opus_val16, s OpusT_opus_val16) {
-	var Xptr, v2 uintptr
-	var i int32
-	var ms OpusT_opus_val16
-	var x1, x11, x2, x21 OpusT_celt_norm
-	_, _, _, _, _, _, _, _ = Xptr, i, ms, x1, x11, x2, x21, v2
-	Xptr = X
-	ms = -s
-	i = 0
-	for {
-		if !(i < len1-stride) {
-			break
-		}
-		x1 = *(*OpusT_celt_norm)(unsafe.Pointer(Xptr))
-		x2 = *(*OpusT_celt_norm)(unsafe.Pointer(Xptr + uintptr(stride)*4))
-		*(*OpusT_celt_norm)(unsafe.Pointer(Xptr + uintptr(stride)*4)) = OpusT_opus_val32(c*x2) + OpusT_opus_val32(s*x1)
-		v2 = Xptr
-		Xptr += 4
-		*(*OpusT_celt_norm)(unsafe.Pointer(v2)) = OpusT_opus_val32(c*x1) + OpusT_opus_val32(ms*x2)
-		i = i + 1
+func exp_rotation1(tls *libc.TLS, X *OpusT_celt_norm, len1 int32, stride int32, c OpusT_opus_val16, s OpusT_opus_val16) {
+	if len1 <= 0 {
+		return
 	}
-	Xptr = X + uintptr(len1-int32(2)*stride-int32(1))*4
-	i = len1 - int32(2)*stride - int32(1)
-	for {
-		if !(i >= 0) {
-			break
-		}
-		x11 = *(*OpusT_celt_norm)(unsafe.Pointer(Xptr))
-		x21 = *(*OpusT_celt_norm)(unsafe.Pointer(Xptr + uintptr(stride)*4))
-		*(*OpusT_celt_norm)(unsafe.Pointer(Xptr + uintptr(stride)*4)) = OpusT_opus_val32(c*x21) + OpusT_opus_val32(s*x11)
-		v2 = Xptr
-		Xptr -= 4
-		*(*OpusT_celt_norm)(unsafe.Pointer(v2)) = OpusT_opus_val32(c*x11) + OpusT_opus_val32(ms*x21)
-		i = i - 1
+	x := unsafe.Slice(X, int(len1))
+	ms := -s
+	for i := int32(0); i < len1-stride; i++ {
+		x1, x2 := x[i], x[i+stride]
+		x[i+stride] = OpusT_opus_val32(c*x2) + OpusT_opus_val32(s*x1)
+		x[i] = OpusT_opus_val32(c*x1) + OpusT_opus_val32(ms*x2)
+	}
+	for i := len1 - 2*stride - 1; i >= 0; i-- {
+		x1, x2 := x[i], x[i+stride]
+		x[i+stride] = OpusT_opus_val32(c*x2) + OpusT_opus_val32(s*x1)
+		x[i] = OpusT_opus_val32(c*x1) + OpusT_opus_val32(ms*x2)
 	}
 }
 
@@ -210,13 +191,13 @@ func Opus_exp_rotation(tls *libc.TLS, X uintptr, len1 int32, dir int32, stride i
 		}
 		if dir < 0 {
 			if stride2 != 0 {
-				exp_rotation1(tls, X+uintptr(i*len1)*4, len1, stride2, s, c)
+				exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, stride2, s, c)
 			}
-			exp_rotation1(tls, X+uintptr(i*len1)*4, len1, int32(1), c, s)
+			exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, int32(1), c, s)
 		} else {
-			exp_rotation1(tls, X+uintptr(i*len1)*4, len1, int32(1), c, -s)
+			exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, int32(1), c, -s)
 			if stride2 != 0 {
-				exp_rotation1(tls, X+uintptr(i*len1)*4, len1, stride2, s, -c)
+				exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, stride2, s, -c)
 			}
 		}
 		i = i + 1
@@ -1934,23 +1915,21 @@ var log2_y_norm_coeff14 = [8]float32{
 	7: float32(0.9068905711174011),
 }
 
-func Opus_hysteresis_decision(tls *libc.TLS, val OpusT_opus_val16, thresholds uintptr, hysteresis uintptr, N int32, prev int32) (r int32) {
+func Opus_hysteresis_decision(tls *libc.TLS, val OpusT_opus_val16, thresholds *OpusT_opus_val16, hysteresis *OpusT_opus_val16, N int32, prev int32) (r int32) {
+	// There are N thresholds and N+1 states; prev is in [0, N].
+	levels := unsafe.Slice(thresholds, int(N))
+	margins := unsafe.Slice(hysteresis, int(N))
 	var i int32
-	_ = i
-	i = 0
-	for {
-		if !(i < N) {
+	for i < N {
+		if val < levels[i] {
 			break
 		}
-		if val < *(*OpusT_opus_val16)(unsafe.Pointer(thresholds + uintptr(i)*4)) {
-			break
-		}
-		i = i + 1
+		i++
 	}
-	if i > prev && val < *(*OpusT_opus_val16)(unsafe.Pointer(thresholds + uintptr(prev)*4))+*(*OpusT_opus_val16)(unsafe.Pointer(hysteresis + uintptr(prev)*4)) {
+	if i > prev && val < levels[prev]+margins[prev] {
 		i = prev
 	}
-	if i < prev && val > *(*OpusT_opus_val16)(unsafe.Pointer(thresholds + uintptr(prev-int32(1))*4))-*(*OpusT_opus_val16)(unsafe.Pointer(hysteresis + uintptr(prev-int32(1))*4)) {
+	if i < prev && val > levels[prev-1]-margins[prev-1] {
 		i = prev
 	}
 	return i
@@ -2334,20 +2313,18 @@ func intensity_stereo(tls *libc.TLS, m uintptr, X uintptr, Y uintptr, bandE uint
 	}
 }
 
-func stereo_split(tls *libc.TLS, X uintptr, Y uintptr, N int32) {
-	var j int32
-	var l, r OpusT_opus_val32
-	_, _, _ = j, l, r
-	j = 0
-	for {
-		if !(j < N) {
-			break
-		}
-		l = float32(float32(0.70710678) * *(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(j)*4)))
-		r = float32(float32(0.70710678) * *(*OpusT_celt_norm)(unsafe.Pointer(Y + uintptr(j)*4)))
-		*(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(j)*4)) = l + r
-		*(*OpusT_celt_norm)(unsafe.Pointer(Y + uintptr(j)*4)) = r - l
-		j = j + 1
+func stereo_split(tls *libc.TLS, X *OpusT_celt_norm, Y *OpusT_celt_norm, N int32) {
+	if N <= 0 {
+		return
+	}
+	x := unsafe.Slice(X, int(N))
+	y := unsafe.Slice(Y, int(N))
+	for j := range x {
+		// Preserve float32 rounding before the sum/difference.
+		l := float32(float32(0.70710678) * x[j])
+		r := float32(float32(0.70710678) * y[j])
+		x[j] = l + r
+		y[j] = r - l
 	}
 }
 
@@ -3128,7 +3105,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 			if itheta == 0 {
 				intensity_stereo(tls, m, X, Y, bandE, i, N)
 			} else {
-				stereo_split(tls, X, Y, N)
+				stereo_split(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), (*OpusT_celt_norm)(unsafe.Pointer(Y)), N)
 			}
 		}
 		/* NOTE: Renormalising X and Y *may* help fixed-point a bit at very high rate.

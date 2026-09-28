@@ -233,27 +233,17 @@ func find_best_pitch(tls *libc.TLS, xcorr uintptr, y uintptr, len1 int32, max_pi
 	}
 }
 
-func celt_fir5(tls *libc.TLS, x uintptr, num uintptr, N int32) {
-	var i int32
-	var mem0, mem1, mem2, mem3, mem4, sum OpusT_opus_val32
-	var num0, num1, num2, num3, num4 OpusT_opus_val16
-	_, _, _, _, _, _, _, _, _, _, _, _ = i, mem0, mem1, mem2, mem3, mem4, num0, num1, num2, num3, num4, sum
-	num0 = *(*OpusT_opus_val16)(unsafe.Pointer(num))
-	num1 = *(*OpusT_opus_val16)(unsafe.Pointer(num + 1*4))
-	num2 = *(*OpusT_opus_val16)(unsafe.Pointer(num + 2*4))
-	num3 = *(*OpusT_opus_val16)(unsafe.Pointer(num + 3*4))
-	num4 = *(*OpusT_opus_val16)(unsafe.Pointer(num + 4*4))
-	mem0 = float32(0)
-	mem1 = float32(0)
-	mem2 = float32(0)
-	mem3 = float32(0)
-	mem4 = float32(0)
-	i = 0
-	for {
-		if !(i < N) {
-			break
-		}
-		sum = *(*OpusT_opus_val16)(unsafe.Pointer(x + uintptr(i)*4))
+func celt_fir5(tls *libc.TLS, x *OpusT_opus_val16, num *OpusT_opus_val16, N int32) {
+	coefs := unsafe.Slice(num, 5)
+	// Like celt/pitch.c, load coefficients before any in-place writes.
+	num0, num1, num2, num3, num4 := coefs[0], coefs[1], coefs[2], coefs[3], coefs[4]
+	if N <= 0 {
+		return
+	}
+	samples := unsafe.Slice(x, int(N))
+	var mem0, mem1, mem2, mem3, mem4 OpusT_opus_val32
+	for i, sample := range samples {
+		sum := sample
 		sum = sum + OpusT_opus_val32(num0*mem0)
 		sum = sum + OpusT_opus_val32(num1*mem1)
 		sum = sum + OpusT_opus_val32(num2*mem2)
@@ -263,9 +253,8 @@ func celt_fir5(tls *libc.TLS, x uintptr, num uintptr, N int32) {
 		mem3 = mem2
 		mem2 = mem1
 		mem1 = mem0
-		mem0 = *(*OpusT_opus_val16)(unsafe.Pointer(x + uintptr(i)*4))
-		*(*OpusT_opus_val16)(unsafe.Pointer(x + uintptr(i)*4)) = sum
-		i = i + 1
+		mem0 = sample
+		samples[i] = sum
 	}
 }
 
@@ -328,7 +317,7 @@ func Opus_pitch_downsample(tls *libc.TLS, x uintptr, x_lp uintptr, len1 int32, C
 	lpc2[2] = lpc[2] + OpusT_opus_val16(c1*lpc[1])
 	lpc2[3] = lpc[3] + OpusT_opus_val16(c1*lpc[2])
 	lpc2[4] = OpusT_opus_val16(c1 * lpc[3])
-	celt_fir5(tls, x_lp, uintptr(unsafe.Pointer(&lpc2[0])), len1)
+	celt_fir5(tls, (*OpusT_opus_val16)(unsafe.Pointer(x_lp)), &lpc2[0], len1)
 }
 
 // C documentation
@@ -1203,10 +1192,9 @@ const Q15ONE2 = "1.0f"
    URL="http://www.stanford.edu/class/ee398/handouts/papers/Moffat98ArithmCoding.pdf"
   }*/
 
-func ec_write_byte(tls *libc.TLS, _this uintptr, _value uint32) (r int32) {
+func ec_write_byte(tls *libc.TLS, _this0 *OpusT_ec_enc, _value uint32) (r int32) {
 	var v1 OpusT_opus_uint32
 	_ = v1
-	_this0 := (*OpusT_ec_enc)(unsafe.Pointer(_this))
 	if _this0.Foffs+_this0.Fend_offs >= _this0.Fstorage {
 		return -int32(1)
 	}
@@ -1216,10 +1204,9 @@ func ec_write_byte(tls *libc.TLS, _this uintptr, _value uint32) (r int32) {
 	return 0
 }
 
-func ec_write_byte_at_end(tls *libc.TLS, _this uintptr, _value uint32) (r int32) {
+func ec_write_byte_at_end(tls *libc.TLS, _this0 *OpusT_ec_enc, _value uint32) (r int32) {
 	var v1 OpusT_opus_uint32
 	_ = v1
-	_this0 := (*OpusT_ec_enc)(unsafe.Pointer(_this))
 	if _this0.Foffs+_this0.Fend_offs >= _this0.Fstorage {
 		return -int32(1)
 	}
@@ -1251,12 +1238,12 @@ func ec_enc_carry_out(tls *libc.TLS, _this uintptr, _c int32) {
 		/*Don't output a byte on the first write.
 		  This compare should be taken care of by branch-prediction thereafter.*/
 		if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem >= 0 {
-			(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte(tls, _this, uint32((*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem+carry))
+			(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), uint32((*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem+carry))
 		}
 		if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext > uint32(0) {
 			sym = (uint32(1)<<int32(EC_SYM_BITS) - uint32(1) + uint32(carry)) & (uint32(1)<<int32(EC_SYM_BITS) - uint32(1))
 			for {
-				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte(tls, _this, sym)
+				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), sym)
 				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext--
 				v1 = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext
 				if !(v1 > uint32(0)) {
@@ -1407,7 +1394,7 @@ func Opus_ec_enc_bits(tls *libc.TLS, _this uintptr, _fl OpusT_opus_uint32, _bits
 	}
 	if uint32(used)+_bits > uint32(int32(4)*int32(CHAR_BIT)) {
 		for cond := true; cond; cond = used >= int32(EC_SYM_BITS) {
-			(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte_at_end(tls, _this, window&(uint32(1)<<int32(EC_SYM_BITS)-uint32(1)))
+			(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte_at_end(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), window&(uint32(1)<<int32(EC_SYM_BITS)-uint32(1)))
 			window = window >> uint32(int32(EC_SYM_BITS))
 			used = used - int32(EC_SYM_BITS)
 		}
@@ -1483,7 +1470,7 @@ func Opus_ec_enc_done(tls *libc.TLS, _this uintptr) {
 	window = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_window
 	used = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnend_bits
 	for used >= int32(EC_SYM_BITS) {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte_at_end(tls, _this, window&(uint32(1)<<int32(EC_SYM_BITS)-uint32(1)))
+		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte_at_end(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), window&(uint32(1)<<int32(EC_SYM_BITS)-uint32(1)))
 		window = window >> uint32(int32(EC_SYM_BITS))
 		used = used - int32(EC_SYM_BITS)
 	}
