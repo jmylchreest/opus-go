@@ -259,7 +259,7 @@ func Opus_silk_decode_parameters(tls *libc.TLS, psDec uintptr, psDecCtrl uintptr
 	/****************/
 	/* Decode NLSFs */
 	/****************/
-	Opus_silk_NLSF_decode(tls, uintptr(unsafe.Pointer(&pNLSF_Q15[0])), uintptr(unsafe.Pointer(&decoder.Findices.FNLSFIndices[0])), decoder.FpsNLSF_CB)
+	Opus_silk_NLSF_decode(tls, &pNLSF_Q15[0], &decoder.Findices.FNLSFIndices[0], (*OpusT_silk_NLSF_CB_struct)(unsafe.Pointer(decoder.FpsNLSF_CB)))
 	/* Convert NLSF parameters to AR prediction filter coefficients */
 	Opus_silk_NLSF2A(tls, uintptr(unsafe.Pointer(&control.FPredCoef_Q12[1][0])), uintptr(unsafe.Pointer(&pNLSF_Q15[0])), decoder.FLPC_order, decoder.Farch)
 	/* If just reset, e.g., because internal Fs changed, do not allow interpolation */
@@ -374,7 +374,7 @@ func Opus_silk_decode_indices(tls *libc.TLS, psDec uintptr, psRangeDec uintptr, 
 	/* Decode LSF Indices */
 	/**********************/
 	indices.FNLSFIndices[0] = int8(Opus_ec_dec_icdf(tls, psRangeDec, (*OpusT_silk_NLSF_CB_struct)(unsafe.Pointer(decoder.FpsNLSF_CB)).FCB1_iCDF+uintptr(int32(indices.FsignalType)>>int32(1)*int32((*OpusT_silk_NLSF_CB_struct)(unsafe.Pointer(decoder.FpsNLSF_CB)).FnVectors)), uint32(8)))
-	Opus_silk_NLSF_unpack(tls, uintptr(unsafe.Pointer(&ec_ix[0])), uintptr(unsafe.Pointer(&pred_Q8[0])), decoder.FpsNLSF_CB, int32(indices.FNLSFIndices[0]))
+	Opus_silk_NLSF_unpack(tls, &ec_ix[0], &pred_Q8[0], (*OpusT_silk_NLSF_CB_struct)(unsafe.Pointer(decoder.FpsNLSF_CB)), int32(indices.FNLSFIndices[0]))
 	if !(int32((*OpusT_silk_NLSF_CB_struct)(unsafe.Pointer((*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FpsNLSF_CB)).Forder) == (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order) {
 		Opus_celt_fatal(tls, __ccgo_ts+6108, __ccgo_ts+6170, int32(82))
 	}
@@ -505,7 +505,7 @@ func Opus_silk_decode_pulses(tls *libc.TLS, psRangeDec uintptr, pulses uintptr, 
 			break
 		}
 		if sum_pulses[i] > 0 {
-			Opus_silk_shell_decoder(tls, pulses+uintptr(int32(int16(i))*int32(int16(int32(SHELL_CODEC_FRAME_LENGTH))))*2, psRangeDec, sum_pulses[i])
+			Opus_silk_shell_decoder(tls, (*[16]OpusT_opus_int16)(unsafe.Pointer(pulses+uintptr(int32(int16(i))*int32(int16(int32(SHELL_CODEC_FRAME_LENGTH))))*2)), (*OpusT_ec_dec)(unsafe.Pointer(psRangeDec)), sum_pulses[i])
 		} else {
 			libc.Xmemset(tls, pulses+uintptr(int32(int16(i))*int32(int16(int32(SHELL_CODEC_FRAME_LENGTH))))*2, 0, uint64(uint32(SHELL_CODEC_FRAME_LENGTH))*uint64(2))
 		}

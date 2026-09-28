@@ -110,7 +110,18 @@ VAD initialization, pitch decoding, Laroia NLSF weights, NLSF vector-quantizatio
 errors, high-quality 2× upsampling (including all six state words), CELT LPC
 coefficients, SILK gain dequantization, SILK mid/side-to-left/right conversion,
 CELT exponential rotation, and fractional entropy-bit accounting (all normalized
-16-bit mantissas at four range scales). Float-to-PCM conversion, VAD initialization,
+16-bit mantissas at four range scales). Entropy decoder tests also compare interval
+updates, probability-coded bits, raw tail bits, and unsigned integers, including
+normalization, exhausted packets, overlapping front/tail reads, and invalid-value
+clamping. These tests copy context fields explicitly across the C boundary;
+`Fbuf` remains a legacy `uintptr`, with its test buffer owner explicitly retained.
+SILK decoder comparisons also cover NLSF unpacking/reconstruction/stabilization,
+LPC coefficient fitting (including input updates), and shell pulse decoding with
+all numeric entropy-state fields checked. Additional decoder tests cover 16-bit
+ICDFs, both Laplace variants, and all 5,625 SILK stereo predictor-index combinations
+plus mid-only flags. Signed Laplace fixtures avoid zero-probability symbols
+(e.g. negative values when `p0=32767`).
+Float-to-PCM conversion, VAD initialization,
 Laroia weights, sum-of-squares, bandwidth expansion (16/32-bit), 2:1 downsampling,
 analysis filter bank, high-quality 2× upsampling, mono/stereo biquads, low-pass
 cutoff control, and pitch decoding tests cover both `opuscc` and `opusccenc`.

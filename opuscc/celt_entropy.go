@@ -3,6 +3,7 @@
 package opuscc
 
 import (
+	"math/bits"
 	"reflect"
 	"unsafe"
 
@@ -94,137 +95,121 @@ func Opus_ec_decode_bin(tls *libc.TLS, dec *OpusT_ec_dec, bits uint32) (r uint32
 	return ft - min(s+1, ft)
 }
 
-func Opus_ec_dec_update(tls *libc.TLS, _this uintptr, _fl uint32, _fh uint32, _ft uint32) {
-	var s OpusT_opus_uint32
-	var v1 uint32
-	_, _ = s, v1
-	s = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Fext * (_ft - _fh)
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Fval -= s
-	if _fl > uint32(0) {
-		v1 = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Fext * (_fh - _fl)
+func Opus_ec_dec_update(tls *libc.TLS, dec *OpusT_ec_dec, fl uint32, fh uint32, ft uint32) {
+	s := dec.Fext * (ft - fh)
+	dec.Fval -= s
+	if fl > 0 {
+		dec.Frng = dec.Fext * (fh - fl)
 	} else {
-		v1 = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng - s
+		dec.Frng -= s
 	}
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng = v1
-	ec_dec_normalize(tls, (*OpusT_ec_dec)(unsafe.Pointer(_this)))
+	ec_dec_normalize(tls, dec)
 }
 
 // C documentation
 //
 //	/*The probability of having a "one" is 1/(1<<_logp).*/
-func Opus_ec_dec_bit_logp(tls *libc.TLS, _this uintptr, _logp uint32) (r1 int32) {
-	var d, r, s OpusT_opus_uint32
-	var ret int32
-	var v1 uint32
-	_, _, _, _, _ = d, r, ret, s, v1
-	r = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng
-	d = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Fval
-	s = r >> _logp
-	ret = libc.BoolInt32(d < s)
-	if !(ret != 0) {
-		(*OpusT_ec_dec)(unsafe.Pointer(_this)).Fval = d - s
-	}
-	if ret != 0 {
-		v1 = s
+func Opus_ec_dec_bit_logp(tls *libc.TLS, dec *OpusT_ec_dec, logp uint32) int32 {
+	r, d := dec.Frng, dec.Fval
+	s := r >> logp
+	var result int32
+	if d < s {
+		result = 1
+		dec.Frng = s
 	} else {
-		v1 = r - s
+		dec.Fval = d - s
+		dec.Frng = r - s
 	}
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng = v1
-	ec_dec_normalize(tls, (*OpusT_ec_dec)(unsafe.Pointer(_this)))
-	return ret
+	ec_dec_normalize(tls, dec)
+	return result
 }
 
-func Opus_ec_dec_icdf(tls *libc.TLS, _this uintptr, _icdf uintptr, _ftb uint32) (r1 int32) {
-	var d, r, s, t OpusT_opus_uint32
-	var ret, v1 int32
-	_, _, _, _, _, _ = d, r, ret, s, t, v1
-	s = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng
-	d = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Fval
-	r = s >> _ftb
-	ret = -int32(1)
-	for cond := true; cond; cond = d < s {
-		t = s
-		ret = ret + 1
-		v1 = ret
-		s = r * uint32(*(*uint8)(unsafe.Pointer(_icdf + uintptr(v1))))
-	}
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Fval = d - s
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng = t - s
-	ec_dec_normalize(tls, (*OpusT_ec_dec)(unsafe.Pointer(_this)))
-	return ret
+func Opus_ec_dec_icdf(tls *libc.TLS, _this uintptr, _icdf uintptr, _ftb uint32) int32 {
+	return ec_dec_icdf(tls, (*OpusT_ec_dec)(unsafe.Pointer(_this)), (*uint8)(unsafe.Pointer(_icdf)), _ftb)
 }
 
-func Opus_ec_dec_icdf16(tls *libc.TLS, _this uintptr, _icdf uintptr, _ftb uint32) (r1 int32) {
-	var d, r, s, t OpusT_opus_uint32
-	var ret, v1 int32
-	_, _, _, _, _, _ = d, r, ret, s, t, v1
-	s = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng
-	d = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Fval
-	r = s >> _ftb
-	ret = -int32(1)
-	for cond := true; cond; cond = d < s {
-		t = s
-		ret = ret + 1
-		v1 = ret
-		s = r * uint32(*(*OpusT_opus_uint16)(unsafe.Pointer(_icdf + uintptr(v1)*2)))
+// The legacy API has no table length. Walk its zero-terminated ICDF with a
+// GC-visible pointer rather than constructing a slice beyond the allocation.
+func ec_dec_icdf(tls *libc.TLS, dec *OpusT_ec_dec, icdf *uint8, ftb uint32) int32 {
+	s, d := dec.Frng, dec.Fval
+	r := s >> ftb
+	var previous uint32
+	var symbol int32
+	for {
+		previous = s
+		s = r * uint32(*icdf)
+		if d >= s {
+			break
+		}
+		symbol++
+		icdf = (*uint8)(unsafe.Add(unsafe.Pointer(icdf), 1))
 	}
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Fval = d - s
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Frng = t - s
-	ec_dec_normalize(tls, (*OpusT_ec_dec)(unsafe.Pointer(_this)))
-	return ret
+	dec.Fval = d - s
+	dec.Frng = previous - s
+	ec_dec_normalize(tls, dec)
+	return symbol
 }
 
-func Opus_ec_dec_uint(tls *libc.TLS, _this uintptr, _ft OpusT_opus_uint32) (r OpusT_opus_uint32) {
-	var ft, s uint32
-	var ftb int32
-	var t OpusT_opus_uint32
-	_, _, _, _ = ft, ftb, s, t
-	/*In order to optimize EC_ILOG(), it is undefined for the value 0.*/
-	if !(_ft > uint32(1)) {
+func Opus_ec_dec_icdf16(tls *libc.TLS, dec *OpusT_ec_dec, icdf *OpusT_opus_uint16, ftb uint32) int32 {
+	s, d := dec.Frng, dec.Fval
+	r := s >> ftb
+	var previous uint32
+	var symbol int32
+	// A zero-terminated table has no explicit length in the C API.
+	for {
+		previous = s
+		s = r * uint32(*icdf)
+		if d >= s {
+			break
+		}
+		symbol++
+		icdf = (*OpusT_opus_uint16)(unsafe.Add(unsafe.Pointer(icdf), unsafe.Sizeof(*icdf)))
+	}
+	dec.Fval = d - s
+	dec.Frng = previous - s
+	ec_dec_normalize(tls, dec)
+	return symbol
+}
+
+func Opus_ec_dec_uint(tls *libc.TLS, dec *OpusT_ec_dec, ft OpusT_opus_uint32) OpusT_opus_uint32 {
+	if ft <= 1 {
 		Opus_celt_fatal(tls, __ccgo_ts+3569, __ccgo_ts+3593, int32(224))
 	}
-	_ft = _ft - 1
-	ftb = int32(4)*int32(CHAR_BIT) - libc.X__builtin_clz(tls, _ft)
-	if ftb > int32(EC_UINT_BITS) {
-		ftb = ftb - int32(EC_UINT_BITS)
-		ft = _ft>>ftb + uint32(1)
-		s = Opus_ec_decode(tls, (*OpusT_ec_dec)(unsafe.Pointer(_this)), ft)
-		Opus_ec_dec_update(tls, _this, s, s+uint32(1), ft)
-		t = s<<ftb | Opus_ec_dec_bits(tls, _this, uint32(ftb))
-		if t <= _ft {
-			return t
+	maximum := ft - 1
+	ftb := bits.Len32(maximum)
+	if ftb > EC_UINT_BITS {
+		ftb -= EC_UINT_BITS
+		highTotal := (maximum >> ftb) + 1
+		symbol := Opus_ec_decode(tls, dec, highTotal)
+		Opus_ec_dec_update(tls, dec, symbol, symbol+1, highTotal)
+		value := (symbol << ftb) | Opus_ec_dec_bits(tls, dec, uint32(ftb))
+		if value <= maximum {
+			return value
 		}
-		(*OpusT_ec_dec)(unsafe.Pointer(_this)).Ferror1 = int32(1)
-		return _ft
-	} else {
-		_ft = _ft + 1
-		s = Opus_ec_decode(tls, (*OpusT_ec_dec)(unsafe.Pointer(_this)), _ft)
-		Opus_ec_dec_update(tls, _this, s, s+uint32(1), _ft)
-		return s
+		dec.Ferror1 = 1
+		return maximum
 	}
-	return r
+	symbol := Opus_ec_decode(tls, dec, ft)
+	Opus_ec_dec_update(tls, dec, symbol, symbol+1, ft)
+	return symbol
 }
 
-func Opus_ec_dec_bits(tls *libc.TLS, _this uintptr, _bits uint32) (r OpusT_opus_uint32) {
-	var available int32
-	var ret OpusT_opus_uint32
-	var window OpusT_ec_window
-	_, _, _ = available, ret, window
-	window = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Fend_window
-	available = (*OpusT_ec_dec)(unsafe.Pointer(_this)).Fnend_bits
-	if uint32(available) < _bits {
-		for cond := true; cond; cond = available <= int32(4)*int32(CHAR_BIT)-int32(EC_SYM_BITS) {
-			window = window | uint32(ec_read_byte_from_end((*OpusT_ec_dec)(unsafe.Pointer(_this))))<<available
-			available = available + int32(EC_SYM_BITS)
+func Opus_ec_dec_bits(tls *libc.TLS, dec *OpusT_ec_dec, bits uint32) OpusT_opus_uint32 {
+	window, available := dec.Fend_window, dec.Fnend_bits
+	if uint32(available) < bits {
+		for {
+			window |= uint32(ec_read_byte_from_end(dec)) << available
+			available += EC_SYM_BITS
+			if available > 32-EC_SYM_BITS {
+				break
+			}
 		}
 	}
-	ret = window & (uint32(1)<<_bits - uint32(1))
-	window = window >> _bits
-	available = int32(uint32(available) - _bits)
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Fend_window = window
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Fnend_bits = available
-	(*OpusT_ec_dec)(unsafe.Pointer(_this)).Fnbits_total = int32(uint32((*OpusT_ec_dec)(unsafe.Pointer(_this)).Fnbits_total) + _bits)
-	return ret
+	result := window & ((uint32(1) << bits) - 1)
+	dec.Fend_window = window >> bits
+	dec.Fnend_bits = int32(uint32(available) - bits)
+	dec.Fnbits_total = int32(uint32(dec.Fnbits_total) + bits)
+	return result
 }
 
 var log2_x_norm_coeff7 = [8]float32{
@@ -1725,7 +1710,7 @@ func Opus_decode_pulses(tls *libc.TLS, _y uintptr, _n int32, _k int32, _dec uint
 	} else {
 		v4 = _k + int32(1)
 	}
-	return cwrsi(tls, _n, _k, Opus_ec_dec_uint(tls, _dec, *(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v1] + uintptr(v2)*4))+*(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v3] + uintptr(v4)*4))), _y)
+	return cwrsi(tls, _n, _k, Opus_ec_dec_uint(tls, (*OpusT_ec_dec)(unsafe.Pointer(_dec)), *(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v1] + uintptr(v2)*4))+*(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v3] + uintptr(v4)*4))), _y)
 }
 
 const CELT_SIG_SCALE7 = 32768

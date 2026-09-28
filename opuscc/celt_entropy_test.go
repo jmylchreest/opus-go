@@ -107,8 +107,8 @@ func TestEntropyDecoderFieldAccesses(t *testing.T) {
 	encoded := []byte{0xd7, 0x4a, 0x91, 0x2e, 0xbc, 0x63}
 	Opus_ec_dec_init(nil, uintptr(unsafe.Pointer(&dec)), entropyBufferPointer(encoded), uint32(len(encoded)))
 	symbol := Opus_ec_decode(nil, &dec, 13)
-	Opus_ec_dec_update(nil, uintptr(unsafe.Pointer(&dec)), symbol, symbol+1, 13)
-	bits := Opus_ec_dec_bits(nil, uintptr(unsafe.Pointer(&dec)), 11)
+	Opus_ec_dec_update(nil, &dec, symbol, symbol+1, 13)
+	bits := Opus_ec_dec_bits(nil, &dec, 11)
 	if symbol != 10 || bits != 0x463 {
 		t.Fatalf("decoded values: symbol=%d bits=%#x, want symbol=10 bits=0x463", symbol, bits)
 	}
@@ -127,9 +127,9 @@ func TestEntropyDecoderFieldAccesses(t *testing.T) {
 	}
 	icdf8 := []byte{250, 180, 100, 0}
 	icdf16 := []uint16{60000, 40000, 20000, 0}
-	bit := Opus_ec_dec_bit_logp(nil, uintptr(unsafe.Pointer(&dec)), 4)
+	bit := Opus_ec_dec_bit_logp(nil, &dec, 4)
 	symbol8 := Opus_ec_dec_icdf(nil, uintptr(unsafe.Pointer(&dec)), entropyBufferPointer(icdf8), 8)
-	symbol16 := Opus_ec_dec_icdf16(nil, uintptr(unsafe.Pointer(&dec)), uintptr(unsafe.Pointer(&icdf16[0])), 16)
+	symbol16 := Opus_ec_dec_icdf16(nil, &dec, &icdf16[0], 16)
 	if bit != 0 || symbol8 != 2 || symbol16 != 3 {
 		t.Fatalf("decoded coding results: bit=%d symbol8=%d symbol16=%d, want 0, 2, 3", bit, symbol8, symbol16)
 	}

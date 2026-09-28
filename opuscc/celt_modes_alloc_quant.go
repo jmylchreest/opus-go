@@ -1092,7 +1092,7 @@ func interp_bits2pulses(tls *libc.TLS, m uintptr, start int32, end int32, skip_s
 				}
 				Opus_ec_enc_bit_logp(tls, ec, 0, uint32(1))
 			} else {
-				if Opus_ec_dec_bit_logp(tls, ec, uint32(1)) != 0 {
+				if Opus_ec_dec_bit_logp(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(1)) != 0 {
 					break
 				}
 			}
@@ -1130,7 +1130,7 @@ func interp_bits2pulses(tls *libc.TLS, m uintptr, start int32, end int32, skip_s
 			*(*int32)(unsafe.Pointer(intensity)) = v7
 			Opus_ec_enc_uint(tls, ec, uint32(*(*int32)(unsafe.Pointer(intensity))-start), uint32(codedBands+int32(1)-start))
 		} else {
-			*(*int32)(unsafe.Pointer(intensity)) = int32(uint32(start) + Opus_ec_dec_uint(tls, ec, uint32(codedBands+int32(1)-start)))
+			*(*int32)(unsafe.Pointer(intensity)) = int32(uint32(start) + Opus_ec_dec_uint(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(codedBands+int32(1)-start)))
 		}
 	} else {
 		*(*int32)(unsafe.Pointer(intensity)) = 0
@@ -1143,7 +1143,7 @@ func interp_bits2pulses(tls *libc.TLS, m uintptr, start int32, end int32, skip_s
 		if encode != 0 {
 			Opus_ec_enc_bit_logp(tls, ec, *(*int32)(unsafe.Pointer(dual_stereo)), uint32(1))
 		} else {
-			*(*int32)(unsafe.Pointer(dual_stereo)) = Opus_ec_dec_bit_logp(tls, ec, uint32(1))
+			*(*int32)(unsafe.Pointer(dual_stereo)) = Opus_ec_dec_bit_logp(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(1))
 		}
 	} else {
 		*(*int32)(unsafe.Pointer(dual_stereo)) = 0
@@ -2959,7 +2959,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 				} else {
 					v5 = x - x0 + (x0+int32(1))*p0
 				}
-				Opus_ec_dec_update(tls, ec, uint32(v1), uint32(v5), uint32(ft))
+				Opus_ec_dec_update(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(v1), uint32(v5), uint32(ft))
 				itheta = x
 			}
 		} else {
@@ -2968,7 +2968,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 				if encode != 0 {
 					Opus_ec_enc_uint(tls, ec, uint32(itheta), uint32(qn+int32(1)))
 				} else {
-					itheta = int32(Opus_ec_dec_uint(tls, ec, uint32(qn+int32(1))))
+					itheta = int32(Opus_ec_dec_uint(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(qn+int32(1))))
 				}
 			} else {
 				fs1 = int32(1)
@@ -3000,7 +3000,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 						fs1 = qn + int32(1) - itheta
 						fl1 = ft1 - (qn+int32(1)-itheta)*(qn+int32(2)-itheta)>>int32(1)
 					}
-					Opus_ec_dec_update(tls, ec, uint32(fl1), uint32(fl1+fs1), uint32(ft1))
+					Opus_ec_dec_update(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(fl1), uint32(fl1+fs1), uint32(ft1))
 				}
 			}
 		}
@@ -3040,7 +3040,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 				if encode != 0 {
 					Opus_ec_enc_bit_logp(tls, ec, inv, uint32(2))
 				} else {
-					inv = Opus_ec_dec_bit_logp(tls, ec, uint32(2))
+					inv = Opus_ec_dec_bit_logp(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(2))
 				}
 			} else {
 				inv = 0
@@ -3100,7 +3100,7 @@ func quant_band_n1(tls *libc.TLS, ctx uintptr, X uintptr, Y uintptr, lowband_out
 				sign = libc.BoolInt32(*(*OpusT_celt_norm)(unsafe.Pointer(x)) < float32(0))
 				Opus_ec_enc_bits(tls, ec, uint32(sign), uint32(1))
 			} else {
-				sign = int32(Opus_ec_dec_bits(tls, ec, uint32(1)))
+				sign = int32(Opus_ec_dec_bits(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(1)))
 			}
 			bandContext.Fremaining_bits -= int32(1) << int32(BITRES)
 		}
@@ -3596,7 +3596,7 @@ func quant_band_stereo(tls *libc.TLS, ctx uintptr, X uintptr, Y uintptr, N int32
 				sign = libc.BoolInt32(OpusT_celt_norm(*(*OpusT_celt_norm)(unsafe.Pointer(x2))**(*OpusT_celt_norm)(unsafe.Pointer(y2 + 1*4)))-OpusT_celt_norm(*(*OpusT_celt_norm)(unsafe.Pointer(x2 + 1*4))**(*OpusT_celt_norm)(unsafe.Pointer(y2))) < float32(0))
 				Opus_ec_enc_bits(tls, ec, uint32(sign), uint32(1))
 			} else {
-				sign = int32(Opus_ec_dec_bits(tls, ec, uint32(1)))
+				sign = int32(Opus_ec_dec_bits(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(1)))
 			}
 		}
 		sign = int32(1) - int32(2)*sign
