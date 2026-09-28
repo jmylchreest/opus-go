@@ -3,6 +3,7 @@
 package opuscc
 
 import (
+	"math/bits"
 	"reflect"
 	"unsafe"
 
@@ -156,7 +157,7 @@ func exp_rotation1(tls *libc.TLS, X *OpusT_celt_norm, len1 int32, stride int32, 
 	}
 }
 
-func Opus_exp_rotation(tls *libc.TLS, X uintptr, len1 int32, dir int32, stride int32, K int32, spread int32) {
+func Opus_exp_rotation(tls *libc.TLS, X *OpusT_celt_norm, len1 int32, dir int32, stride int32, K int32, spread int32) {
 	var c, gain, s, theta OpusT_opus_val16
 	var factor, i, stride2 int32
 	var v1, v2 OpusT_opus_uint32
@@ -165,6 +166,7 @@ func Opus_exp_rotation(tls *libc.TLS, X uintptr, len1 int32, dir int32, stride i
 	if int32(2)*K >= len1 || spread == SPREAD_NONE {
 		return
 	}
+	samples := unsafe.Slice(X, int(len1))
 	factor = SPREAD_FACTOR[spread-int32(1)]
 	gain = OpusT_opus_val32(float32(1)*float32(len1)) / float32(len1+factor*K)
 	theta = float32(float32(0.5) * OpusT_opus_val16(gain*gain))
@@ -191,13 +193,13 @@ func Opus_exp_rotation(tls *libc.TLS, X uintptr, len1 int32, dir int32, stride i
 		}
 		if dir < 0 {
 			if stride2 != 0 {
-				exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, stride2, s, c)
+				exp_rotation1(tls, &samples[i*len1], len1, stride2, s, c)
 			}
-			exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, int32(1), c, s)
+			exp_rotation1(tls, &samples[i*len1], len1, int32(1), c, s)
 		} else {
-			exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, int32(1), c, -s)
+			exp_rotation1(tls, &samples[i*len1], len1, int32(1), c, -s)
 			if stride2 != 0 {
-				exp_rotation1(tls, (*OpusT_celt_norm)(unsafe.Pointer(X+uintptr(i*len1)*4)), len1, stride2, s, -c)
+				exp_rotation1(tls, &samples[i*len1], len1, stride2, s, -c)
 			}
 		}
 		i = i + 1
@@ -640,7 +642,7 @@ func Opus_alg_quant(tls *libc.TLS, X uintptr, N int32, K int32, spread int32, B 
 	}
 	v23 = st
 	iy = (*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v23)).Fglobal_stack - uintptr(uint64(uint32(N+int32(3)))*(uint64(4)/uint64(1)))
-	Opus_exp_rotation(tls, X, N, int32(1), B, K, spread)
+	Opus_exp_rotation(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), N, int32(1), B, K, spread)
 	yy = Opus_op_pvq_search_c(tls, X, iy, K, N, arch)
 	collapse_mask = extract_collapse_mask(tls, (*int32)(unsafe.Pointer(iy)), N, B)
 	Opus_encode_pulses(tls, iy, N, K, enc)
@@ -648,7 +650,7 @@ func Opus_alg_quant(tls *libc.TLS, X uintptr, N int32, K int32, spread int32, B 
 		normalise_residual(tls, (*int32)(unsafe.Pointer(iy)), (*OpusT_celt_norm)(unsafe.Pointer(X)), N, yy, gain, 0)
 	}
 	if resynth != 0 {
-		Opus_exp_rotation(tls, X, N, -int32(1), B, K, spread)
+		Opus_exp_rotation(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), N, -int32(1), B, K, spread)
 	}
 	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
 	if !(st != 0) {
@@ -760,7 +762,7 @@ func Opus_alg_unquant(tls *libc.TLS, X uintptr, N int32, K int32, spread int32, 
 	iy = (*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v23)).Fglobal_stack - uintptr(uint64(uint32(N))*(uint64(4)/uint64(1)))
 	Ryy = Opus_decode_pulses(tls, iy, N, K, dec)
 	normalise_residual(tls, (*int32)(unsafe.Pointer(iy)), (*OpusT_celt_norm)(unsafe.Pointer(X)), N, Ryy, gain, yy_shift)
-	Opus_exp_rotation(tls, X, N, -int32(1), B, K, spread)
+	Opus_exp_rotation(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), N, -int32(1), B, K, spread)
 	collapse_mask = extract_collapse_mask(tls, (*int32)(unsafe.Pointer(iy)), N, B)
 	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
 	if !(st != 0) {
@@ -1804,18 +1806,16 @@ func Opus_clt_compute_allocation(tls *libc.TLS, m uintptr, start int32, end int3
 //	/* This is a faster version of ec_tell_frac() that takes advantage
 //	   of the low (1/8 bit) resolution to use just a linear function
 //	   followed by a lookup to determine the exact transition thresholds. */
-func Opus_ec_tell_frac(tls *libc.TLS, _this uintptr) (r1 OpusT_opus_uint32) {
-	var b uint32
-	var l int32
-	var nbits, r OpusT_opus_uint32
-	_, _, _, _ = b, l, nbits, r
-	nbits = uint32((*OpusT_ec_ctx)(unsafe.Pointer(_this)).Fnbits_total << int32(BITRES))
-	l = int32(4)*int32(CHAR_BIT) - libc.X__builtin_clz(tls, (*OpusT_ec_ctx)(unsafe.Pointer(_this)).Frng)
-	r = (*OpusT_ec_ctx)(unsafe.Pointer(_this)).Frng >> (l - int32(16))
-	b = r>>int32(12) - uint32(8)
-	b = b + libc.BoolUint32(r > correction[b])
-	l = int32(uint32(l<<int32(3)) + b)
-	return nbits - uint32(l)
+func Opus_ec_tell_frac(tls *libc.TLS, ctx *OpusT_ec_ctx) OpusT_opus_uint32 {
+	nbits := uint32(ctx.Fnbits_total) << BITRES
+	l := bits.Len32(ctx.Frng)
+	// Entropy contexts supply a normalized range with at least 16 bits.
+	r := ctx.Frng >> (l - 16)
+	b := (r >> 12) - 8
+	if r > correction[b] {
+		b++
+	}
+	return nbits - (uint32(l<<3) + b)
 }
 
 var correction = [8]uint32{
@@ -2247,24 +2247,15 @@ func compute_channel_weights(tls *libc.TLS, Ex OpusT_celt_ener, Ey OpusT_celt_en
 	w[1] = Ey + minE/float32(3)
 }
 
-func intensity_stereo(tls *libc.TLS, m uintptr, X uintptr, Y uintptr, bandE uintptr, bandID int32, N int32) {
-	var a1, a2, left, norm, right OpusT_opus_val16
-	var i, j int32
-	_, _, _, _, _, _, _ = a1, a2, i, j, left, norm, right
-	i = bandID
-	left = *(*OpusT_celt_ener)(unsafe.Pointer(bandE + uintptr(i)*4))
-	right = *(*OpusT_celt_ener)(unsafe.Pointer(bandE + uintptr(i+(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4))
-	norm = float32(1e-15) + float32(libc.Xsqrt(tls, float64(float32(1e-15)+OpusT_opus_val32(left*left)+OpusT_opus_val32(right*right))))
-	a1 = left / norm
-	a2 = right / norm
-	j = 0
-	for {
-		if !(j < N) {
-			break
-		}
-		*(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(j)*4)) = OpusT_opus_val16(a1**(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(j)*4))) + OpusT_opus_val16(a2**(*OpusT_celt_norm)(unsafe.Pointer(Y + uintptr(j)*4)))
-		/* Side is not encoded, no need to calculate */
-		j = j + 1
+func intensity_stereo(tls *libc.TLS, m *OpusT_OpusCustomMode, X *OpusT_celt_norm, Y *OpusT_celt_norm, bandE *OpusT_celt_ener, bandID int32, N int32) {
+	energies := unsafe.Slice(bandE, int(m.FnbEBands)+int(bandID)+1)
+	left, right := energies[bandID], energies[int(bandID)+int(m.FnbEBands)]
+	norm := float32(1e-15) + float32(libc.Xsqrt(tls, float64(float32(1e-15)+OpusT_opus_val32(left*left)+OpusT_opus_val32(right*right))))
+	a1, a2 := left/norm, right/norm
+	x, y := unsafe.Slice(X, int(N)), unsafe.Slice(Y, int(N))
+	for j := range x {
+		x[j] = OpusT_opus_val16(a1*x[j]) + OpusT_opus_val16(a2*y[j])
+		// Side is not encoded, no need to calculate.
 	}
 }
 
@@ -2876,7 +2867,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 		itheta_q30 = Opus_stereo_itheta(tls, X, Y, stereo, N, (*band_ctx)(unsafe.Pointer(ctx)).Farch)
 		itheta = itheta_q30 >> int32(16)
 	}
-	tell = int32(Opus_ec_tell_frac(tls, ec))
+	tell = int32(Opus_ec_tell_frac(tls, (*OpusT_ec_ctx)(unsafe.Pointer(ec))))
 	if qn != int32(1) {
 		if encode != 0 {
 			if !(stereo != 0) || (*band_ctx)(unsafe.Pointer(ctx)).Ftheta_round == 0 {
@@ -3022,7 +3013,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 		itheta = int32(v3)
 		if encode != 0 && stereo != 0 {
 			if itheta == 0 {
-				intensity_stereo(tls, m, X, Y, bandE, i, N)
+				intensity_stereo(tls, (*OpusT_OpusCustomMode)(unsafe.Pointer(m)), (*OpusT_celt_norm)(unsafe.Pointer(X)), (*OpusT_celt_norm)(unsafe.Pointer(Y)), (*OpusT_celt_ener)(unsafe.Pointer(bandE)), i, N)
 			} else {
 				stereo_split(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), (*OpusT_celt_norm)(unsafe.Pointer(Y)), N)
 			}
@@ -3043,7 +3034,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 						j = j + 1
 					}
 				}
-				intensity_stereo(tls, m, X, Y, bandE, i, N)
+				intensity_stereo(tls, (*OpusT_OpusCustomMode)(unsafe.Pointer(m)), (*OpusT_celt_norm)(unsafe.Pointer(X)), (*OpusT_celt_norm)(unsafe.Pointer(Y)), (*OpusT_celt_ener)(unsafe.Pointer(bandE)), i, N)
 			}
 			if *(*int32)(unsafe.Pointer(b)) > int32(2)<<int32(BITRES) && (*band_ctx)(unsafe.Pointer(ctx)).Fremaining_bits > int32(2)<<int32(BITRES) {
 				if encode != 0 {
@@ -3062,7 +3053,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 			itheta_q30 = 0
 		}
 	}
-	qalloc = int32(Opus_ec_tell_frac(tls, ec) - uint32(tell))
+	qalloc = int32(Opus_ec_tell_frac(tls, (*OpusT_ec_ctx)(unsafe.Pointer(ec))) - uint32(tell))
 	*(*int32)(unsafe.Pointer(b)) -= qalloc
 	if itheta == 0 {
 		imid = int32(32767)
@@ -4346,7 +4337,7 @@ func Opus_quant_all_bands(tls *libc.TLS, encode int32, m uintptr, start int32, e
 		if !(N1 > int32(0)) {
 			Opus_celt_fatal(tls, __ccgo_ts+5488, __ccgo_ts+5312, int32(1705))
 		}
-		tell = int32(Opus_ec_tell_frac(tls, ec))
+		tell = int32(Opus_ec_tell_frac(tls, (*OpusT_ec_ctx)(unsafe.Pointer(ec))))
 		/* Compute how many bits we want to allocate to this band */
 		if i1 != start {
 			balance = balance - tell

@@ -3,6 +3,7 @@
 package opusccenc
 
 import (
+	"math/bits"
 	"reflect"
 	"unsafe"
 
@@ -138,7 +139,7 @@ func Opus_silk_A2NLSF(tls *libc.TLS, NLSF uintptr, a_Q16 uintptr, d int32) {
 					return
 				}
 				/* Error: Apply progressively more bandwidth expansion and run again */
-				Opus_silk_bwexpander_32(tls, a_Q16, d, int32(65536)-libc.Int32FromUint32(libc.Uint32FromInt32(libc.Int32FromInt32(1))<<i))
+				Opus_silk_bwexpander_32(tls, (*OpusT_opus_int32)(unsafe.Pointer(a_Q16)), d, int32(65536)-libc.Int32FromUint32(libc.Uint32FromInt32(libc.Int32FromInt32(1))<<i))
 				silk_A2NLSF_init(tls, a_Q16, bp, bp+52, dd)
 				p = bp                                      /* Pointer to polynomial */
 				xlo = int32(Opus_silk_LSFCosTab_FIX_Q12[0]) /* Q12*/
@@ -2615,7 +2616,7 @@ func Opus_silk_LPC_fit(tls *libc.TLS, a_QOUT uintptr, a_QIN uintptr, QOUT int32,
 			}
 			maxabs = v3 /* ( silk_int32_MAX >> 14 ) + silk_int16_MAX = 163838 */
 			chirp_Q16 = int32(float64(libc.Float64FromFloat64(0.999)*float64(libc.Int64FromInt32(1)<<libc.Int32FromInt32(16)))+libc.Float64FromFloat64(0.5)) - libc.Int32FromUint32(libc.Uint32FromInt32(maxabs-libc.Int32FromInt32(silk_int16_MAX27))<<libc.Int32FromInt32(14))/(maxabs*(idx+libc.Int32FromInt32(1))>>libc.Int32FromInt32(2))
-			Opus_silk_bwexpander_32(tls, a_QIN, d, chirp_Q16)
+			Opus_silk_bwexpander_32(tls, (*OpusT_opus_int32)(unsafe.Pointer(a_QIN)), d, chirp_Q16)
 		} else {
 			break
 		}
@@ -2793,43 +2794,20 @@ const QA1 = 16
 //
 //	/* helper function for NLSF2A(..) */
 
-func Opus_silk_LP_variable_cutoff(tls *libc.TLS, psLP uintptr, frame uintptr, frame_length int32) {
-	bp := tls.Alloc(32)
-	defer tls.Free(32)
-	var fac_Q16 OpusT_opus_int32
-	var ind, v1, v2 int32
-	var _ /* A_Q28 at bp+16 */ [2]OpusT_opus_int32
-	var _ /* B_Q28 at bp+0 */ [3]OpusT_opus_int32
-	_, _, _, _ = fac_Q16, ind, v1, v2
-	fac_Q16 = 0
-	ind = 0
-	_ = (*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Ftransition_frame_no >= 0 && (*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Ftransition_frame_no <= libc.Int32FromInt32(TRANSITION_TIME_MS)/(libc.Int32FromInt32(SUB_FRAME_LENGTH_MS)*libc.Int32FromInt32(MAX_NB_SUBFR))
-	/* Run filter if needed */
-	if (*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Fmode != 0 {
-		/* Calculate index and interpolation factor for interpolation */
-		fac_Q16 = libc.Int32FromUint32(libc.Uint32FromInt32(libc.Int32FromInt32(TRANSITION_TIME_MS)/(libc.Int32FromInt32(SUB_FRAME_LENGTH_MS)*libc.Int32FromInt32(MAX_NB_SUBFR))-(*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Ftransition_frame_no) << (libc.Int32FromInt32(16) - libc.Int32FromInt32(6)))
-		ind = fac_Q16 >> libc.Int32FromInt32(16)
-		fac_Q16 = fac_Q16 - libc.Int32FromUint32(libc.Uint32FromInt32(ind)<<libc.Int32FromInt32(16))
-		_ = ind >= libc.Int32FromInt32(0)
-		_ = ind < libc.Int32FromInt32(TRANSITION_INT_NUM)
-		/* Interpolate filter coefficients */
-		silk_LP_interpolate_filter_taps(tls, bp, bp+16, ind, fac_Q16)
-		/* Update transition frame number for next frame */
-		if (*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Ftransition_frame_no+(*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Fmode > libc.Int32FromInt32(TRANSITION_TIME_MS)/(libc.Int32FromInt32(SUB_FRAME_LENGTH_MS)*libc.Int32FromInt32(MAX_NB_SUBFR)) {
-			v1 = libc.Int32FromInt32(TRANSITION_TIME_MS) / (libc.Int32FromInt32(SUB_FRAME_LENGTH_MS) * libc.Int32FromInt32(MAX_NB_SUBFR))
-		} else {
-			if (*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Ftransition_frame_no+(*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Fmode < 0 {
-				v2 = 0
-			} else {
-				v2 = (*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Ftransition_frame_no + (*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Fmode
-			}
-			v1 = v2
-		}
-		(*OpusT_silk_LP_state)(unsafe.Pointer(psLP)).Ftransition_frame_no = v1
-		/* ARMA low-pass filtering */
-		_ = libc.Bool(true) && libc.Bool(true)
-		Opus_silk_biquad_alt_stride1(tls, frame, bp, bp+16, psLP, frame, frame_length)
+func Opus_silk_LP_variable_cutoff(tls *libc.TLS, psLP *OpusT_silk_LP_state, frame *OpusT_opus_int16, frame_length int32) {
+	if psLP.Fmode == 0 {
+		return
 	}
+	const transitionFrames = int32(TRANSITION_TIME_MS) / (int32(SUB_FRAME_LENGTH_MS) * int32(MAX_NB_SUBFR))
+	// C requires transition_frame_no in [0, transitionFrames].
+	factor := (transitionFrames - psLP.Ftransition_frame_no) << 10
+	ind := factor >> 16
+	factor -= ind << 16
+	var b [3]OpusT_opus_int32
+	var a [2]OpusT_opus_int32
+	silk_LP_interpolate_filter_taps(tls, &b, &a, ind, factor)
+	psLP.Ftransition_frame_no = min(max(psLP.Ftransition_frame_no+psLP.Fmode, 0), transitionFrames)
+	Opus_silk_biquad_alt_stride1(tls, frame, &b, &a, &psLP.FIn_LP_State, frame, frame_length)
 }
 
 const silk_int16_MAX8 = 0x7FFF
@@ -3111,7 +3089,7 @@ func Opus_silk_NLSF2A(tls *libc.TLS, a_Q12 uintptr, NLSF uintptr, d int32, arch 
 		}
 		/* Prediction coefficients are (too close to) unstable; apply bandwidth expansion   */
 		/* on the unscaled coefficients, convert to Q12 and measure again                   */
-		Opus_silk_bwexpander_32(tls, bp+200, d, int32(65536)-libc.Int32FromUint32(libc.Uint32FromInt32(libc.Int32FromInt32(2))<<i))
+		Opus_silk_bwexpander_32(tls, (*OpusT_opus_int32)(unsafe.Pointer(bp+200)), d, int32(65536)-libc.Int32FromUint32(libc.Uint32FromInt32(libc.Int32FromInt32(2))<<i))
 		k = 0
 		for {
 			if !(k < d) {
@@ -3306,7 +3284,7 @@ func Opus_silk_NLSF_VQ(tls *libc.TLS, err_Q24 uintptr, in_Q15 uintptr, pCB_Q8 ui
 //
 //	/* Unpack predictor values and indices for entropy coding tables */
 
-func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT uintptr, pNLSF_Q15 uintptr, D int32) {
+func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT *OpusT_opus_int16, pNLSF_Q15 *OpusT_opus_int16, D int32) {
 	var k, v1, v2, v3, v5 int32
 	var tmp1_int, tmp2_int OpusT_opus_int32
 	_, _, _, _, _, _, _ = k, tmp1_int, tmp2_int, v1, v2, v3, v5
@@ -3316,8 +3294,10 @@ func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT uintptr, pNLSF
 	if !(D&libc.Int32FromInt32(1) == libc.Int32FromInt32(0)) {
 		Opus_celt_fatal(tls, __ccgo_ts+10206, __ccgo_ts+10173, int32(52))
 	}
+	output := unsafe.Slice(pNLSFW_Q_OUT, int(D))
+	input := unsafe.Slice(pNLSF_Q15, int(D))
 	/* First value */
-	v1 = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15)))
+	v1 = int32(input[0])
 	v2 = int32(1)
 	if v1 > v2 {
 		v5 = v1
@@ -3327,7 +3307,7 @@ func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT uintptr, pNLSF
 	v3 = v5
 	tmp1_int = v3
 	tmp1_int = libc.Int32FromInt32(1) << (libc.Int32FromInt32(15) + libc.Int32FromInt32(NLSF_W_Q)) / tmp1_int
-	v1 = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15 + 1*2))) - int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15)))
+	v1 = int32(input[1]) - int32(input[0])
 	v2 = int32(1)
 	if v1 > v2 {
 		v5 = v1
@@ -3345,15 +3325,15 @@ func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT uintptr, pNLSF
 		v5 = v2
 	}
 	v3 = v5
-	*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT)) = int16(v3)
-	_ = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT))) > libc.Int32FromInt32(0)
+	output[0] = int16(v3)
+	_ = int32(output[0]) > libc.Int32FromInt32(0)
 	/* Main loop */
 	k = int32(1)
 	for {
 		if !(k < D-int32(1)) {
 			break
 		}
-		v1 = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15 + uintptr(k+int32(1))*2))) - int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15 + uintptr(k)*2)))
+		v1 = int32(input[k+1]) - int32(input[k])
 		v2 = int32(1)
 		if v1 > v2 {
 			v5 = v1
@@ -3371,9 +3351,9 @@ func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT uintptr, pNLSF
 			v5 = v2
 		}
 		v3 = v5
-		*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT + uintptr(k)*2)) = int16(v3)
-		_ = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT + uintptr(k)*2))) > libc.Int32FromInt32(0)
-		v1 = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15 + uintptr(k+int32(2))*2))) - int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15 + uintptr(k+int32(1))*2)))
+		output[k] = int16(v3)
+		_ = int32(output[k]) > libc.Int32FromInt32(0)
+		v1 = int32(input[k+2]) - int32(input[k+1])
 		v2 = int32(1)
 		if v1 > v2 {
 			v5 = v1
@@ -3391,12 +3371,12 @@ func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT uintptr, pNLSF
 			v5 = v2
 		}
 		v3 = v5
-		*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT + uintptr(k+int32(1))*2)) = int16(v3)
-		_ = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT + uintptr(k+int32(1))*2))) > libc.Int32FromInt32(0)
+		output[k+1] = int16(v3)
+		_ = int32(output[k+1]) > libc.Int32FromInt32(0)
 		k = k + int32(2)
 	}
 	/* Last value */
-	v1 = libc.Int32FromInt32(1)<<libc.Int32FromInt32(15) - int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15 + uintptr(D-int32(1))*2)))
+	v1 = libc.Int32FromInt32(1)<<libc.Int32FromInt32(15) - int32(input[D-1])
 	v2 = int32(1)
 	if v1 > v2 {
 		v5 = v1
@@ -3414,8 +3394,8 @@ func Opus_silk_NLSF_VQ_weights_laroia(tls *libc.TLS, pNLSFW_Q_OUT uintptr, pNLSF
 		v5 = v2
 	}
 	v3 = v5
-	*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT + uintptr(D-int32(1))*2)) = int16(v3)
-	_ = int32(*(*OpusT_opus_int16)(unsafe.Pointer(pNLSFW_Q_OUT + uintptr(D-int32(1))*2))) > libc.Int32FromInt32(0)
+	output[D-1] = int16(v3)
+	_ = int32(output[D-1]) > libc.Int32FromInt32(0)
 }
 
 const silk_int16_MAX22 = 0x7FFF
@@ -5518,12 +5498,12 @@ func Opus_silk_PLC_glue_frames(tls *libc.TLS, psDec uintptr, frame uintptr, leng
 	psPLC = psDec + 4292
 	if (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FlossCnt != 0 {
 		/* Calculate energy in concealed residual */
-		Opus_silk_sum_sqr_shift(tls, psPLC+60, psPLC+64, frame, length)
+		Opus_silk_sum_sqr_shift(tls, &(*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).Fconc_energy, &(*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).Fconc_energy_shift, (*OpusT_opus_int16)(unsafe.Pointer(frame)), length)
 		(*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).Flast_frame_lost = int32(1)
 	} else {
 		if (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FsPLC.Flast_frame_lost != 0 {
 			/* Calculate residual in decoded signal if last frame was lost */
-			Opus_silk_sum_sqr_shift(tls, bp+12, bp+8, frame, length)
+			Opus_silk_sum_sqr_shift(tls, (*OpusT_opus_int32)(unsafe.Pointer(bp+12)), (*int32)(unsafe.Pointer(bp+8)), (*OpusT_opus_int16)(unsafe.Pointer(frame)), length)
 			/* Normalize energies */
 			if *(*int32)(unsafe.Pointer(bp + 8)) > (*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).Fconc_energy_shift {
 				(*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).Fconc_energy = (*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).Fconc_energy >> (*(*int32)(unsafe.Pointer(bp + 8)) - (*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).Fconc_energy_shift)
@@ -5769,12 +5749,13 @@ func Opus_silk_VAD_GetSA_Q8_c(tls *libc.TLS, psEncC uintptr, pIn uintptr) (r1 in
 	}
 	v23 = st
 	X = (*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v23)).Fglobal_stack - uintptr(libc.Uint64FromInt32(X_offset[int32(3)]+decimated_framelength1)*(libc.Uint64FromInt64(2)/libc.Uint64FromInt64(1)))
+	vad := (*OpusT_silk_VAD_state)(unsafe.Pointer(psSilk_VAD))
 	/* 0-8 kHz to 0-4 kHz and 4-8 kHz */
-	Opus_silk_ana_filt_bank_1(tls, pIn, psSilk_VAD, X, X+uintptr(X_offset[int32(3)])*2, (*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).Fframe_length)
+	Opus_silk_ana_filt_bank_1(tls, (*OpusT_opus_int16)(unsafe.Pointer(pIn)), &vad.FAnaState, (*OpusT_opus_int16)(unsafe.Pointer(X)), (*OpusT_opus_int16)(unsafe.Pointer(X+uintptr(X_offset[3])*2)), (*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).Fframe_length)
 	/* 0-4 kHz to 0-2 kHz and 2-4 kHz */
-	Opus_silk_ana_filt_bank_1(tls, X, psSilk_VAD+8, X, X+uintptr(X_offset[int32(2)])*2, decimated_framelength1)
+	Opus_silk_ana_filt_bank_1(tls, (*OpusT_opus_int16)(unsafe.Pointer(X)), &vad.FAnaState1, (*OpusT_opus_int16)(unsafe.Pointer(X)), (*OpusT_opus_int16)(unsafe.Pointer(X+uintptr(X_offset[2])*2)), decimated_framelength1)
 	/* 0-2 kHz to 0-1 kHz and 1-2 kHz */
-	Opus_silk_ana_filt_bank_1(tls, X, psSilk_VAD+16, X, X+uintptr(X_offset[int32(1)])*2, decimated_framelength2)
+	Opus_silk_ana_filt_bank_1(tls, (*OpusT_opus_int16)(unsafe.Pointer(X)), &vad.FAnaState2, (*OpusT_opus_int16)(unsafe.Pointer(X)), (*OpusT_opus_int16)(unsafe.Pointer(X+uintptr(X_offset[1])*2)), decimated_framelength2)
 	/*********************************************/
 	/* HP filter on lowest band (differentiator) */
 	/*********************************************/
@@ -6115,52 +6096,16 @@ _57:
 //	/* Noise level estimation */
 //	/**************************/
 
-func Opus_silk_VAD_Init(tls *libc.TLS, psSilk_VAD uintptr) (r int32) {
-	var b1, ret, v6 int32
-	var v2, v3, v4 OpusT_opus_int32
-	_, _, _, _, _, _ = b1, ret, v2, v3, v4, v6
-	ret = 0
-	/* reset state memory */
-	libc.Xmemset(tls, psSilk_VAD, 0, libc.Uint64FromInt64(112))
-	/* init noise levels */
-	/* Initialize array with approx pink noise levels (psd proportional to inverse of frequency) */
-	b1 = 0
-	for {
-		if !(b1 < int32(VAD_N_BANDS)) {
-			break
-		}
-		v2 = libc.Int32FromInt32(VAD_NOISE_LEVELS_BIAS) / (b1 + libc.Int32FromInt32(1))
-		v3 = int32(1)
-		if v2 > v3 {
-			v6 = v2
-		} else {
-			v6 = v3
-		}
-		v4 = v6
-		*(*OpusT_opus_int32)(unsafe.Pointer(psSilk_VAD + 92 + uintptr(b1)*4)) = v4
-		b1 = b1 + 1
+func Opus_silk_VAD_Init(tls *libc.TLS, state *OpusT_silk_VAD_state) int32 {
+	*state = OpusT_silk_VAD_state{}
+	for b := range state.FNoiseLevelBias {
+		state.FNoiseLevelBias[b] = max(int32(VAD_NOISE_LEVELS_BIAS)/int32(b+1), 1)
+		state.FNL[b] = 100 * state.FNoiseLevelBias[b]
+		state.Finv_NL[b] = int32(silk_int32_MAX) / state.FNL[b]
+		state.FNrgRatioSmth_Q8[b] = 100 * 256
 	}
-	/* Initialize state */
-	b1 = 0
-	for {
-		if !(b1 < int32(VAD_N_BANDS)) {
-			break
-		}
-		*(*OpusT_opus_int32)(unsafe.Pointer(psSilk_VAD + 60 + uintptr(b1)*4)) = libc.Int32FromInt32(100) * *(*OpusT_opus_int32)(unsafe.Pointer(psSilk_VAD + 92 + uintptr(b1)*4))
-		*(*OpusT_opus_int32)(unsafe.Pointer(psSilk_VAD + 76 + uintptr(b1)*4)) = libc.Int32FromInt32(silk_int32_MAX) / *(*OpusT_opus_int32)(unsafe.Pointer(psSilk_VAD + 60 + uintptr(b1)*4))
-		b1 = b1 + 1
-	}
-	(*OpusT_silk_VAD_state)(unsafe.Pointer(psSilk_VAD)).Fcounter = int32(15)
-	/* init smoothed energy-to-noise ratio*/
-	b1 = 0
-	for {
-		if !(b1 < int32(VAD_N_BANDS)) {
-			break
-		}
-		*(*OpusT_opus_int32)(unsafe.Pointer(psSilk_VAD + 40 + uintptr(b1)*4)) = libc.Int32FromInt32(100) * libc.Int32FromInt32(256) /* 100 * 256 --> 20 dB SNR */
-		b1 = b1 + 1
-	}
-	return ret
+	state.Fcounter = 15
+	return 0
 }
 
 // C documentation
@@ -6377,11 +6322,13 @@ POSSIBILITY OF SUCH DAMAGE.
 //
 //	/* High-pass filter with cutoff frequency adaptation based on pitch lag statistics */
 
-func Opus_silk_ana_filt_bank_1(tls *libc.TLS, in uintptr, S uintptr, outL uintptr, outH uintptr, N OpusT_opus_int32) {
+func Opus_silk_ana_filt_bank_1(tls *libc.TLS, in *OpusT_opus_int16, S *[2]OpusT_opus_int32, outL *OpusT_opus_int16, outH *OpusT_opus_int16, N OpusT_opus_int32) {
 	var N2, k, v2, v3 int32
 	var X, Y, in32, out_1, out_2 OpusT_opus_int32
 	_, _, _, _, _, _, _, _, _ = N2, X, Y, in32, k, out_1, out_2, v2, v3
 	N2 = N >> libc.Int32FromInt32(1)
+	input := unsafe.Slice(in, int(2*N2))
+	low, high := unsafe.Slice(outL, int(N2)), unsafe.Slice(outH, int(N2))
 	/* Internal variables and state are in Q10 format */
 	k = 0
 	for {
@@ -6389,19 +6336,19 @@ func Opus_silk_ana_filt_bank_1(tls *libc.TLS, in uintptr, S uintptr, outL uintpt
 			break
 		}
 		/* Convert to Q10 */
-		in32 = libc.Int32FromUint32(libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k)*2)))) << libc.Int32FromInt32(10))
+		in32 = int32(input[2*k]) << 10
 		/* All-pass section for even input sample */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S))
+		Y = in32 - S[0]
 		X = int32(int64(Y) + int64(Y)*int64(A_fb1_21)>>libc.Int32FromInt32(16))
-		out_1 = *(*OpusT_opus_int32)(unsafe.Pointer(S)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = in32 + X
+		out_1 = S[0] + X
+		S[0] = in32 + X
 		/* Convert to Q10 */
-		in32 = libc.Int32FromUint32(libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))) << libc.Int32FromInt32(10))
+		in32 = int32(input[2*k+1]) << 10
 		/* All-pass section for odd input sample, and add to output of previous section */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))
+		Y = in32 - S[1]
 		X = int32(int64(Y) * int64(A_fb1_20) >> libc.Int32FromInt32(16))
-		out_2 = *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = in32 + X
+		out_2 = S[1] + X
+		S[1] = in32 + X
 		/* Add/subtract, convert back to int16 and store to output */
 		if ((out_2+out_1)>>(libc.Int32FromInt32(11)-libc.Int32FromInt32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX17) {
 			v2 = int32(silk_int16_MAX17)
@@ -6413,7 +6360,7 @@ func Opus_silk_ana_filt_bank_1(tls *libc.TLS, in uintptr, S uintptr, outL uintpt
 			}
 			v2 = v3
 		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(outL + uintptr(k)*2)) = int16(v2)
+		low[k] = int16(v2)
 		if ((out_2-out_1)>>(libc.Int32FromInt32(11)-libc.Int32FromInt32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX17) {
 			v2 = int32(silk_int16_MAX17)
 		} else {
@@ -6424,7 +6371,7 @@ func Opus_silk_ana_filt_bank_1(tls *libc.TLS, in uintptr, S uintptr, outL uintpt
 			}
 			v2 = v3
 		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(outH + uintptr(k)*2)) = int16(v2)
+		high[k] = int16(v2)
 		k = k + 1
 	}
 }
@@ -6698,75 +6645,62 @@ POSSIBILITY OF SUCH DAMAGE.
 //
 //	/* Compute reflection coefficients from input signal */
 
-func Opus_silk_biquad_alt_stride1(tls *libc.TLS, in uintptr, B_Q28 uintptr, A_Q28 uintptr, S uintptr, out uintptr, len1 OpusT_opus_int32) {
-	var A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28, inval, out32_Q14 OpusT_opus_int32
-	var k, v2, v3 int32
-	_, _, _, _, _, _, _, _, _ = A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28, inval, k, out32_Q14, v2, v3
-	/* Negate A_Q28 values and split in two parts */
-	A0_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) & int32(0x00003FFF)              /* lower part */
-	A0_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) >> libc.Int32FromInt32(14)       /* upper part */
-	A1_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) & int32(0x00003FFF)        /* lower part */
-	A1_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) >> libc.Int32FromInt32(14) /* upper part */
-	k = 0
-	for {
-		if !(k < len1) {
-			break
-		}
-		/* S[ 0 ], S[ 1 ]: Q12 */
-		inval = int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(k)*2)))
-		out32_Q14 = libc.Int32FromUint32(libc.Uint32FromInt32(int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S)))+int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28)))*int64(int16(inval))>>libc.Int32FromInt32(16))) << libc.Int32FromInt32(2))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) + (int32(int64(out32_Q14)*int64(int16(A0_L_Q28))>>libc.Int32FromInt32(16))>>(libc.Int32FromInt32(14)-libc.Int32FromInt32(1))+int32(1))>>int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(out32_Q14)*int64(int16(A0_U_Q28))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 1*4)))*int64(int16(inval))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = (int32(int64(out32_Q14)*int64(int16(A1_L_Q28))>>libc.Int32FromInt32(16))>>(libc.Int32FromInt32(14)-libc.Int32FromInt32(1)) + libc.Int32FromInt32(1)) >> libc.Int32FromInt32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(out32_Q14)*int64(int16(A1_U_Q28))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 2*4)))*int64(int16(inval))>>libc.Int32FromInt32(16))
-		/* Scale back to Q0 and saturate */
-		if (out32_Q14+libc.Int32FromInt32(1)<<libc.Int32FromInt32(14)-int32(1))>>int32(14) > int32(silk_int16_MAX17) {
-			v2 = int32(silk_int16_MAX17)
-		} else {
-			if (out32_Q14+libc.Int32FromInt32(1)<<libc.Int32FromInt32(14)-int32(1))>>int32(14) < int32(libc.Int16FromInt32(0x8000)) {
-				v3 = int32(libc.Int16FromInt32(0x8000))
-			} else {
-				v3 = (out32_Q14 + libc.Int32FromInt32(1)<<libc.Int32FromInt32(14) - int32(1)) >> int32(14)
-			}
-			v2 = v3
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(k)*2)) = int16(v2)
-		k = k + 1
+func Opus_silk_biquad_alt_stride1(tls *libc.TLS, in *OpusT_opus_int16, B_Q28 *[3]OpusT_opus_int32, A_Q28 *[2]OpusT_opus_int32, S *[2]OpusT_opus_int32, out *OpusT_opus_int16, len1 OpusT_opus_int32) {
+	A0_L_Q28, A0_U_Q28 := -A_Q28[0]&0x3fff, -A_Q28[0]>>14
+	A1_L_Q28, A1_U_Q28 := -A_Q28[1]&0x3fff, -A_Q28[1]>>14
+	if len1 <= 0 {
+		return
+	}
+	input, output := unsafe.Slice(in, int(len1)), unsafe.Slice(out, int(len1))
+	for k, sample := range input {
+		inval := int64(sample)
+		out32_Q14 := int32(int64(S[0])+((int64(B_Q28[0])*inval)>>16)) << 2
+		// SMULWB narrows coefficients to signed 16 bits before multiplication.
+		low0 := int32((int64(out32_Q14) * int64(int16(A0_L_Q28))) >> 16)
+		S[0] = S[1] + (((low0 >> 13) + 1) >> 1)
+		S[0] = int32(int64(S[0]) + ((int64(out32_Q14) * int64(int16(A0_U_Q28))) >> 16))
+		S[0] = int32(int64(S[0]) + ((int64(B_Q28[1]) * inval) >> 16))
+		low1 := int32((int64(out32_Q14) * int64(int16(A1_L_Q28))) >> 16)
+		S[1] = ((low1 >> 13) + 1) >> 1
+		S[1] = int32(int64(S[1]) + ((int64(out32_Q14) * int64(int16(A1_U_Q28))) >> 16))
+		S[1] = int32(int64(S[1]) + ((int64(B_Q28[2]) * inval) >> 16))
+		value := (out32_Q14 + (1 << 14) - 1) >> 14
+		output[k] = int16(min(max(value, -32768), 32767))
 	}
 }
 
-func Opus_silk_biquad_alt_stride2_c(tls *libc.TLS, in uintptr, B_Q28 uintptr, A_Q28 uintptr, S uintptr, out uintptr, len1 OpusT_opus_int32) {
+func Opus_silk_biquad_alt_stride2_c(tls *libc.TLS, in *OpusT_opus_int16, B_Q28 *[3]OpusT_opus_int32, A_Q28 *[2]OpusT_opus_int32, S *[4]OpusT_opus_int32, out *OpusT_opus_int16, len1 OpusT_opus_int32) {
 	var A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28 OpusT_opus_int32
 	var k, v2, v3 int32
 	var out32_Q14 [2]OpusT_opus_int32
 	_, _, _, _, _, _, _, _ = A0_L_Q28, A0_U_Q28, A1_L_Q28, A1_U_Q28, k, out32_Q14, v2, v3
 	/* Negate A_Q28 values and split in two parts */
-	A0_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) & int32(0x00003FFF)              /* lower part */
-	A0_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28)) >> libc.Int32FromInt32(14)       /* upper part */
-	A1_L_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) & int32(0x00003FFF)        /* lower part */
-	A1_U_Q28 = -*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + 1*4)) >> libc.Int32FromInt32(14) /* upper part */
+	A0_L_Q28, A0_U_Q28 = -A_Q28[0]&0x3fff, -A_Q28[0]>>14
+	A1_L_Q28, A1_U_Q28 = -A_Q28[1]&0x3fff, -A_Q28[1]>>14
+	if len1 <= 0 {
+		return
+	}
+	input, output := unsafe.Slice(in, 2*int(len1)), unsafe.Slice(out, 2*int(len1))
 	k = 0
 	for {
 		if !(k < len1) {
 			break
 		}
 		/* S[ 0 ], S[ 1 ], S[ 2 ], S[ 3 ]: Q12 */
-		out32_Q14[0] = libc.Int32FromUint32(libc.Uint32FromInt32(int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S)))+int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+0)*2)))>>libc.Int32FromInt32(16))) << libc.Int32FromInt32(2))
-		out32_Q14[int32(1)] = libc.Int32FromUint32(libc.Uint32FromInt32(int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)))+int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))>>libc.Int32FromInt32(16))) << libc.Int32FromInt32(2))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) + (int32(int64(out32_Q14[0])*int64(int16(A0_L_Q28))>>libc.Int32FromInt32(16))>>(libc.Int32FromInt32(14)-libc.Int32FromInt32(1))+int32(1))>>int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) = *(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) + (int32(int64(out32_Q14[int32(1)])*int64(int16(A0_L_Q28))>>libc.Int32FromInt32(16))>>(libc.Int32FromInt32(14)-libc.Int32FromInt32(1))+int32(1))>>int32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(out32_Q14[0])*int64(int16(A0_U_Q28))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4))) + int64(out32_Q14[int32(1)])*int64(int16(A0_U_Q28))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 1*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+0)*2)))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 1*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = (int32(int64(out32_Q14[0])*int64(int16(A1_L_Q28))>>libc.Int32FromInt32(16))>>(libc.Int32FromInt32(14)-libc.Int32FromInt32(1)) + libc.Int32FromInt32(1)) >> libc.Int32FromInt32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) = (int32(int64(out32_Q14[int32(1)])*int64(int16(A1_L_Q28))>>libc.Int32FromInt32(16))>>(libc.Int32FromInt32(14)-libc.Int32FromInt32(1)) + libc.Int32FromInt32(1)) >> libc.Int32FromInt32(1)
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(out32_Q14[0])*int64(int16(A1_U_Q28))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4))) + int64(out32_Q14[int32(1)])*int64(int16(A1_U_Q28))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 2*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+0)*2)))>>libc.Int32FromInt32(16))
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + 2*4)))*int64(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))>>libc.Int32FromInt32(16))
+		out32_Q14[0] = int32(int64(S[0])+((int64(B_Q28[0])*int64(input[2*k]))>>16)) << 2
+		out32_Q14[1] = int32(int64(S[2])+((int64(B_Q28[0])*int64(input[2*k+1]))>>16)) << 2
+		S[0] = S[1] + ((int32((int64(out32_Q14[0])*int64(int16(A0_L_Q28)))>>16)>>13)+1)>>1
+		S[2] = S[3] + ((int32((int64(out32_Q14[1])*int64(int16(A0_L_Q28)))>>16)>>13)+1)>>1
+		S[0] = int32(int64(S[0]) + ((int64(out32_Q14[0]) * int64(int16(A0_U_Q28))) >> 16))
+		S[2] = int32(int64(S[2]) + ((int64(out32_Q14[1]) * int64(int16(A0_U_Q28))) >> 16))
+		S[0] = int32(int64(S[0]) + ((int64(B_Q28[1]) * int64(input[2*k])) >> 16))
+		S[2] = int32(int64(S[2]) + ((int64(B_Q28[1]) * int64(input[2*k+1])) >> 16))
+		S[1] = ((int32((int64(out32_Q14[0])*int64(int16(A1_L_Q28)))>>16) >> 13) + 1) >> 1
+		S[3] = ((int32((int64(out32_Q14[1])*int64(int16(A1_L_Q28)))>>16) >> 13) + 1) >> 1
+		S[1] = int32(int64(S[1]) + ((int64(out32_Q14[0]) * int64(int16(A1_U_Q28))) >> 16))
+		S[3] = int32(int64(S[3]) + ((int64(out32_Q14[1]) * int64(int16(A1_U_Q28))) >> 16))
+		S[1] = int32(int64(S[1]) + ((int64(B_Q28[2]) * int64(input[2*k])) >> 16))
+		S[3] = int32(int64(S[3]) + ((int64(B_Q28[2]) * int64(input[2*k+1])) >> 16))
 		/* Scale back to Q0 and saturate */
 		if (out32_Q14[0]+libc.Int32FromInt32(1)<<libc.Int32FromInt32(14)-int32(1))>>int32(14) > int32(silk_int16_MAX17) {
 			v2 = int32(silk_int16_MAX17)
@@ -6778,7 +6712,7 @@ func Opus_silk_biquad_alt_stride2_c(tls *libc.TLS, in uintptr, B_Q28 uintptr, A_
 			}
 			v2 = v3
 		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(int32(2)*k+0)*2)) = int16(v2)
+		output[2*k] = int16(v2)
 		if (out32_Q14[int32(1)]+libc.Int32FromInt32(1)<<libc.Int32FromInt32(14)-int32(1))>>int32(14) > int32(silk_int16_MAX17) {
 			v2 = int32(silk_int16_MAX17)
 		} else {
@@ -6789,7 +6723,7 @@ func Opus_silk_biquad_alt_stride2_c(tls *libc.TLS, in uintptr, B_Q28 uintptr, A_
 			}
 			v2 = v3
 		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(int32(2)*k+int32(1))*2)) = int16(v2)
+		output[2*k+1] = int16(v2)
 		k = k + 1
 	}
 }
@@ -7073,23 +7007,15 @@ func Opus_silk_burg_modified_FLP(tls *libc.TLS, A uintptr, x uintptr, minInvGain
 //
 //	/* Chirp (bw expand) LP AR filter */
 
-func Opus_silk_bwexpander(tls *libc.TLS, ar uintptr, d int32, chirp_Q16 OpusT_opus_int32) {
-	var chirp_minus_one_Q16 OpusT_opus_int32
-	var i int32
-	_, _ = chirp_minus_one_Q16, i
-	chirp_minus_one_Q16 = chirp_Q16 - int32(65536)
-	/* NB: Dont use silk_SMULWB, instead of silk_RSHIFT_ROUND( silk_MUL(), 16 ), below.  */
-	/* Bias in silk_SMULWB can lead to unstable filters                                */
-	i = 0
-	for {
-		if !(i < d-int32(1)) {
-			break
-		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(i)*2)) = int16((chirp_Q16*int32(*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(i)*2)))>>(libc.Int32FromInt32(16)-libc.Int32FromInt32(1)) + libc.Int32FromInt32(1)) >> libc.Int32FromInt32(1))
-		chirp_Q16 = chirp_Q16 + (chirp_Q16*chirp_minus_one_Q16>>(libc.Int32FromInt32(16)-libc.Int32FromInt32(1))+int32(1))>>int32(1)
-		i = i + 1
+func Opus_silk_bwexpander(tls *libc.TLS, ar *OpusT_opus_int16, d int32, chirp_Q16 OpusT_opus_int32) {
+	coefficients := unsafe.Slice(ar, int(d))
+	chirpMinusOne := chirp_Q16 - 65536
+	// C requires d > 0. Use rounded MUL, not biased SMULWB.
+	for i := int32(0); i < d-1; i++ {
+		coefficients[i] = int16(((chirp_Q16 * int32(coefficients[i]) >> 15) + 1) >> 1)
+		chirp_Q16 += ((chirp_Q16 * chirpMinusOne >> 15) + 1) >> 1
 	}
-	*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(d-int32(1))*2)) = int16((chirp_Q16*int32(*(*OpusT_opus_int16)(unsafe.Pointer(ar + uintptr(d-int32(1))*2)))>>(libc.Int32FromInt32(16)-libc.Int32FromInt32(1)) + libc.Int32FromInt32(1)) >> libc.Int32FromInt32(1))
+	coefficients[d-1] = int16(((chirp_Q16 * int32(coefficients[d-1]) >> 15) + 1) >> 1)
 }
 
 const __restrict_arr = "restrict"
@@ -7359,21 +7285,14 @@ POSSIBILITY OF SUCH DAMAGE.
 
 type OpusT_prevent_empty_translation_unit_warning = int32
 
-func Opus_silk_bwexpander_32(tls *libc.TLS, ar uintptr, d int32, chirp_Q16 OpusT_opus_int32) {
-	var chirp_minus_one_Q16 OpusT_opus_int32
-	var i int32
-	_, _ = chirp_minus_one_Q16, i
-	chirp_minus_one_Q16 = chirp_Q16 - int32(65536)
-	i = 0
-	for {
-		if !(i < d-int32(1)) {
-			break
-		}
-		*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(i)*4)) = int32(int64(chirp_Q16) * int64(*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(i)*4))) >> libc.Int32FromInt32(16))
-		chirp_Q16 = chirp_Q16 + (chirp_Q16*chirp_minus_one_Q16>>(libc.Int32FromInt32(16)-libc.Int32FromInt32(1))+int32(1))>>int32(1)
-		i = i + 1
+func Opus_silk_bwexpander_32(tls *libc.TLS, ar *OpusT_opus_int32, d int32, chirp_Q16 OpusT_opus_int32) {
+	coefficients := unsafe.Slice(ar, int(d))
+	chirpMinusOne := chirp_Q16 - 65536
+	for i := int32(0); i < d-1; i++ {
+		coefficients[i] = int32(int64(chirp_Q16) * int64(coefficients[i]) >> 16)
+		chirp_Q16 += ((chirp_Q16 * chirpMinusOne >> 15) + 1) >> 1
 	}
-	*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(d-int32(1))*4)) = int32(int64(chirp_Q16) * int64(*(*OpusT_opus_int32)(unsafe.Pointer(ar + uintptr(d-int32(1))*4))) >> libc.Int32FromInt32(16))
+	coefficients[d-1] = int32(int64(chirp_Q16) * int64(coefficients[d-1]) >> 16)
 }
 
 /***********************************************************************
@@ -9116,15 +9035,15 @@ func Opus_silk_decode_parameters(tls *libc.TLS, psDec uintptr, psDecCtrl uintptr
 	libc.Xmemcpy(tls, psDec+2344, bp, libc.Uint64FromInt32((*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order)*libc.Uint64FromInt64(2))
 	/* After a packet loss do BWE of LPC coefs */
 	if (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FlossCnt != 0 {
-		Opus_silk_bwexpander(tls, psDecCtrl+32, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order, int32(BWE_AFTER_LOSS_Q16))
-		Opus_silk_bwexpander(tls, psDecCtrl+32+1*32, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order, int32(BWE_AFTER_LOSS_Q16))
+		Opus_silk_bwexpander(tls, &(*OpusT_silk_decoder_control)(unsafe.Pointer(psDecCtrl)).FPredCoef_Q12[0][0], (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order, int32(BWE_AFTER_LOSS_Q16))
+		Opus_silk_bwexpander(tls, &(*OpusT_silk_decoder_control)(unsafe.Pointer(psDecCtrl)).FPredCoef_Q12[1][0], (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order, int32(BWE_AFTER_LOSS_Q16))
 	}
 	if int32((*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Findices.FsignalType) == int32(TYPE_VOICED) {
 		/*********************/
 		/* Decode pitch lags */
 		/*********************/
 		/* Decode pitch values */
-		Opus_silk_decode_pitch(tls, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Findices.FlagIndex, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Findices.FcontourIndex, psDecCtrl, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Ffs_kHz, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fnb_subfr)
+		Opus_silk_decode_pitch(tls, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Findices.FlagIndex, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Findices.FcontourIndex, &(*OpusT_silk_decoder_control)(unsafe.Pointer(psDecCtrl)).FpitchL[0], (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Ffs_kHz, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fnb_subfr)
 		/* Decode Codebook Index */
 		cbk_ptr_Q7 = Opus_silk_LTP_vq_ptrs_Q7[(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Findices.FPERIndex] /* set pointer to start of codebook */
 		k = 0
@@ -9160,69 +9079,41 @@ func Opus_silk_decode_parameters(tls *libc.TLS, psDec uintptr, psDecCtrl uintptr
 //
 //	/* Decode side-information parameters from payload */
 
-func Opus_silk_decode_pitch(tls *libc.TLS, lagIndex OpusT_opus_int16, contourIndex OpusT_opus_int8, pitch_lags uintptr, Fs_kHz int32, nb_subfr int32) {
-	var Lag_CB_ptr uintptr
-	var cbk_size, k, lag, max_lag, min_lag, v2, v3, v4, v5, v6 int32
-	_, _, _, _, _, _, _, _, _, _, _ = Lag_CB_ptr, cbk_size, k, lag, max_lag, min_lag, v2, v3, v4, v5, v6
+func Opus_silk_decode_pitch(tls *libc.TLS, lagIndex OpusT_opus_int16, contourIndex OpusT_opus_int8, pitch_lags *int32, Fs_kHz int32, nb_subfr int32) {
+	var Lag_CB_ptr []OpusT_opus_int8
+	var cbk_size, lag, max_lag, min_lag int32
 	if Fs_kHz == int32(8) {
 		if nb_subfr == int32(PE_MAX_NB_SUBFR) {
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage2))
+			Lag_CB_ptr = unsafe.Slice(&Opus_silk_CB_lags_stage2[0][0], len(Opus_silk_CB_lags_stage2)*len(Opus_silk_CB_lags_stage2[0]))
 			cbk_size = int32(PE_NB_CBKS_STAGE2_EXT)
 		} else {
 			if !(nb_subfr == libc.Int32FromInt32(PE_MAX_NB_SUBFR)>>libc.Int32FromInt32(1)) {
 				Opus_celt_fatal(tls, __ccgo_ts+9912, __ccgo_ts+9963, int32(54))
 			}
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage2_10_ms))
+			Lag_CB_ptr = unsafe.Slice(&Opus_silk_CB_lags_stage2_10_ms[0][0], len(Opus_silk_CB_lags_stage2_10_ms)*len(Opus_silk_CB_lags_stage2_10_ms[0]))
 			cbk_size = int32(PE_NB_CBKS_STAGE2_10MS)
 		}
 	} else {
 		if nb_subfr == int32(PE_MAX_NB_SUBFR) {
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage3))
+			Lag_CB_ptr = unsafe.Slice(&Opus_silk_CB_lags_stage3[0][0], len(Opus_silk_CB_lags_stage3)*len(Opus_silk_CB_lags_stage3[0]))
 			cbk_size = int32(PE_NB_CBKS_STAGE3_MAX)
 		} else {
 			if !(nb_subfr == libc.Int32FromInt32(PE_MAX_NB_SUBFR)>>libc.Int32FromInt32(1)) {
 				Opus_celt_fatal(tls, __ccgo_ts+9912, __ccgo_ts+9963, int32(63))
 			}
-			Lag_CB_ptr = uintptr(unsafe.Pointer(&Opus_silk_CB_lags_stage3_10_ms))
+			Lag_CB_ptr = unsafe.Slice(&Opus_silk_CB_lags_stage3_10_ms[0][0], len(Opus_silk_CB_lags_stage3_10_ms)*len(Opus_silk_CB_lags_stage3_10_ms[0]))
 			cbk_size = int32(PE_NB_CBKS_STAGE3_10MS)
 		}
 	}
 	min_lag = int32(int16(libc.Int32FromInt32(PE_MIN_LAG_MS))) * int32(int16(Fs_kHz))
 	max_lag = int32(int16(libc.Int32FromInt32(PE_MAX_LAG_MS))) * int32(int16(Fs_kHz))
 	lag = min_lag + int32(lagIndex)
-	k = 0
-	for {
-		if !(k < nb_subfr) {
-			break
-		}
-		*(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) = lag + int32(*(*OpusT_opus_int8)(unsafe.Pointer(Lag_CB_ptr + uintptr(k*cbk_size+int32(contourIndex)))))
-		if min_lag > max_lag {
-			if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) > min_lag {
-				v3 = min_lag
-			} else {
-				if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) < max_lag {
-					v4 = max_lag
-				} else {
-					v4 = *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4))
-				}
-				v3 = v4
-			}
-			v2 = v3
-		} else {
-			if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) > max_lag {
-				v5 = max_lag
-			} else {
-				if *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) < min_lag {
-					v6 = min_lag
-				} else {
-					v6 = *(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4))
-				}
-				v5 = v6
-			}
-			v2 = v5
-		}
-		*(*int32)(unsafe.Pointer(pitch_lags + uintptr(k)*4)) = v2
-		k = k + 1
+	output := unsafe.Slice(pitch_lags, int(nb_subfr))
+	// silk_LIMIT accepts either ordering of its bounds.
+	low, high := min(min_lag, max_lag), max(min_lag, max_lag)
+	for k := range output {
+		value := lag + int32(Lag_CB_ptr[k*int(cbk_size)+int(contourIndex)])
+		output[k] = min(max(value, low), high)
 	}
 }
 
@@ -9754,7 +9645,7 @@ func Opus_silk_encode_frame_FLP(tls *libc.TLS, psEnc uintptr, pnBytesOut uintptr
 	/***************************************/
 	/* Ensure smooth bandwidth transitions */
 	/***************************************/
-	Opus_silk_LP_variable_cutoff(tls, psEnc+16, psEnc+5112+uintptr(1)*2, (*OpusT_silk_encoder_state_FLP)(unsafe.Pointer(psEnc)).FsCmn.Fframe_length)
+	Opus_silk_LP_variable_cutoff(tls, &(*OpusT_silk_encoder_state_FLP)(unsafe.Pointer(psEnc)).FsCmn.FsLP, &(*OpusT_silk_encoder_state_FLP)(unsafe.Pointer(psEnc)).FsCmn.FinputBuf[1], (*OpusT_silk_encoder_state_FLP)(unsafe.Pointer(psEnc)).FsCmn.Fframe_length)
 	/*******************************************/
 	/* Copy new frame to front of input buffer */
 	/*******************************************/
@@ -11514,7 +11405,7 @@ func Opus_silk_init_encoder(tls *libc.TLS, psEnc uintptr, arch int32) (r int32) 
 	/* Used to deactivate LSF interpolation, pitch prediction */
 	(*OpusT_silk_encoder_state_FLP)(unsafe.Pointer(psEnc)).FsCmn.Ffirst_frame_after_reset = int32(1)
 	/* Initialize Silk VAD */
-	ret = ret + Opus_silk_VAD_Init(tls, psEnc+36)
+	ret = ret + Opus_silk_VAD_Init(tls, &(*OpusT_silk_encoder_state_FLP)(unsafe.Pointer(psEnc)).FsCmn.FsVAD)
 	return ret
 }
 
@@ -12505,7 +12396,7 @@ func Opus_silk_pitch_analysis_core_FLP(tls *libc.TLS, frame uintptr, pitch_out u
 			k = k - 1
 		}
 		libc.Xmemset(tls, bp+2880, 0, libc.Uint64FromInt32(2)*libc.Uint64FromInt64(4))
-		Opus_silk_resampler_down2(tls, bp+2880, bp+1920, bp+11428, frame_length)
+		Opus_silk_resampler_down2(tls, (*[2]OpusT_opus_int32)(unsafe.Pointer(bp+2880)), (*OpusT_opus_int16)(unsafe.Pointer(bp+1920)), (*OpusT_opus_int16)(unsafe.Pointer(bp+11428)), frame_length)
 		k1 = frame_length_8kHz - libc.Int32FromInt32(1)
 		for {
 			if !(k1 >= libc.Int32FromInt32(0)) {
@@ -12572,7 +12463,7 @@ func Opus_silk_pitch_analysis_core_FLP(tls *libc.TLS, frame uintptr, pitch_out u
 	}
 	/* Decimate again to 4 kHz */
 	libc.Xmemset(tls, bp+2880, 0, libc.Uint64FromInt32(2)*libc.Uint64FromInt64(4))
-	Opus_silk_resampler_down2(tls, bp+2880, bp+2560, bp+1920, frame_length_8kHz)
+	Opus_silk_resampler_down2(tls, (*[2]OpusT_opus_int32)(unsafe.Pointer(bp+2880)), (*OpusT_opus_int16)(unsafe.Pointer(bp+2560)), (*OpusT_opus_int16)(unsafe.Pointer(bp+1920)), frame_length_8kHz)
 	k1 = frame_length_4kHz - libc.Int32FromInt32(1)
 	for {
 		if !(k1 >= libc.Int32FromInt32(0)) {
@@ -13148,14 +13039,14 @@ func Opus_silk_process_NLSFs(tls *libc.TLS, psEncC uintptr, PredCoef_Q12 uintptr
 	}
 	_ = NLSF_mu_Q20 <= int32(float64(libc.Float64FromFloat64(0.005)*float64(libc.Int64FromInt32(1)<<libc.Int32FromInt32(20)))+libc.Float64FromFloat64(0.5))
 	/* Calculate NLSF weights */
-	Opus_silk_NLSF_VQ_weights_laroia(tls, bp+32, pNLSF_Q15, (*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).FpredictLPCOrder)
+	Opus_silk_NLSF_VQ_weights_laroia(tls, (*OpusT_opus_int16)(unsafe.Pointer(bp+32)), (*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15)), (*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).FpredictLPCOrder)
 	/* Update NLSF weights for interpolated NLSFs */
 	doInterpolate = libc.BoolInt32((*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).FuseInterpolatedNLSFs == int32(1) && int32((*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).Findices.FNLSFInterpCoef_Q2) < int32(4))
 	if doInterpolate != 0 {
 		/* Calculate the interpolated NLSF vector for the first half */
 		Opus_silk_interpolate(tls, (*OpusT_opus_int16)(unsafe.Pointer(bp)), (*OpusT_opus_int16)(unsafe.Pointer(prev_NLSFq_Q15)), (*OpusT_opus_int16)(unsafe.Pointer(pNLSF_Q15)), int32((*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).Findices.FNLSFInterpCoef_Q2), (*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).FpredictLPCOrder)
 		/* Calculate first half NLSF weights for the interpolated NLSFs */
-		Opus_silk_NLSF_VQ_weights_laroia(tls, bp+64, bp, (*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).FpredictLPCOrder)
+		Opus_silk_NLSF_VQ_weights_laroia(tls, (*OpusT_opus_int16)(unsafe.Pointer(bp+64)), (*OpusT_opus_int16)(unsafe.Pointer(bp)), (*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).FpredictLPCOrder)
 		/* Update NLSF weights with contribution from first half */
 		i_sqr_Q15 = int16(libc.Int32FromUint32(libc.Uint32FromInt32(int32(int16((*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).Findices.FNLSFInterpCoef_Q2))*int32(int16((*OpusT_silk_encoder_state)(unsafe.Pointer(psEncC)).Findices.FNLSFInterpCoef_Q2))) << libc.Int32FromInt32(11)))
 		i = 0
@@ -13525,11 +13416,13 @@ var silk_resampler_up2_hq_11 = [3]OpusT_opus_int16{
 //
 //	/* Downsample by a factor 2/3, low quality */
 
-func Opus_silk_resampler_down2(tls *libc.TLS, S uintptr, out uintptr, in uintptr, inLen OpusT_opus_int32) {
+func Opus_silk_resampler_down2(tls *libc.TLS, S *[2]OpusT_opus_int32, out *OpusT_opus_int16, in *OpusT_opus_int16, inLen OpusT_opus_int32) {
 	var X, Y, in32, k, len2, out32 OpusT_opus_int32
 	var v2, v3 int32
 	_, _, _, _, _, _, _, _ = X, Y, in32, k, len2, out32, v2, v3
 	len2 = inLen >> int32(1)
+	input := unsafe.Slice(in, int(2*len2))
+	output := unsafe.Slice(out, int(len2))
 	if !(int32(silk_resampler_down2_02) > libc.Int32FromInt32(0)) {
 		Opus_celt_fatal(tls, __ccgo_ts+10375, __ccgo_ts+10420, int32(46))
 	}
@@ -13543,20 +13436,20 @@ func Opus_silk_resampler_down2(tls *libc.TLS, S uintptr, out uintptr, in uintptr
 			break
 		}
 		/* Convert to Q10 */
-		in32 = libc.Int32FromUint32(libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k)*2)))) << libc.Int32FromInt32(10))
+		in32 = int32(input[2*k]) << 10
 		/* All-pass section for even input sample */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S))
+		Y = in32 - S[0]
 		X = int32(int64(Y) + int64(Y)*int64(silk_resampler_down2_12)>>libc.Int32FromInt32(16))
-		out32 = *(*OpusT_opus_int32)(unsafe.Pointer(S)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = in32 + X
+		out32 = S[0] + X
+		S[0] = in32 + X
 		/* Convert to Q10 */
-		in32 = libc.Int32FromUint32(libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(int32(2)*k+int32(1))*2)))) << libc.Int32FromInt32(10))
+		in32 = int32(input[2*k+1]) << 10
 		/* All-pass section for odd input sample, and add to output of previous section */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))
+		Y = in32 - S[1]
 		X = int32(int64(Y) * int64(silk_resampler_down2_02) >> libc.Int32FromInt32(16))
-		out32 = out32 + *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))
+		out32 = out32 + S[1]
 		out32 = out32 + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = in32 + X
+		S[1] = in32 + X
 		/* Add, convert back to int16 and store to output */
 		if (out32>>(libc.Int32FromInt32(11)-libc.Int32FromInt32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX23) {
 			v2 = int32(silk_int16_MAX23)
@@ -13568,7 +13461,7 @@ func Opus_silk_resampler_down2(tls *libc.TLS, S uintptr, out uintptr, in uintptr
 			}
 			v2 = v3
 		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(k)*2)) = int16(v2)
+		output[k] = int16(v2)
 		k = k + 1
 	}
 }
@@ -14021,7 +13914,7 @@ func Opus_silk_resampler_private_IIR_FIR(tls *libc.TLS, SS uintptr, out uintptr,
 		}
 		nSamplesIn = v29
 		/* Upsample 2x */
-		Opus_silk_resampler_private_up2_HQ(tls, S, buf+8*2, in, nSamplesIn)
+		Opus_silk_resampler_private_up2_HQ(tls, &(*OpusT_silk_resampler_state_struct)(unsafe.Pointer(S)).FsIIR, (*OpusT_opus_int16)(unsafe.Pointer(buf+8*2)), (*OpusT_opus_int16)(unsafe.Pointer(in)), nSamplesIn)
 		max_index_Q16 = libc.Int32FromUint32(libc.Uint32FromInt32(nSamplesIn) << (libc.Int32FromInt32(16) + libc.Int32FromInt32(1))) /* + 1 because 2x upsampling */
 		out = silk_resampler_private_IIR_FIR_INTERPOL(tls, out, buf, max_index_Q16, index_increment_Q16)
 		in = in + uintptr(nSamplesIn)*2
@@ -14204,7 +14097,8 @@ var silk_resampler_up2_hq_15 = [3]OpusT_opus_int16{
 	2: int16(libc.Int32FromInt32(55542) - libc.Int32FromInt32(65536)),
 }
 
-func Opus_silk_resampler_private_up2_HQ(tls *libc.TLS, S uintptr, out uintptr, in uintptr, len1 OpusT_opus_int32) {
+func Opus_silk_resampler_private_up2_HQ(tls *libc.TLS, S *[6]OpusT_opus_int32, out *OpusT_opus_int16, in *OpusT_opus_int16, len1 OpusT_opus_int32) {
+	input, output := unsafe.Slice(in, int(len1)), unsafe.Slice(out, 2*int(len1))
 	var X, Y, in32, k, out32_1, out32_2 OpusT_opus_int32
 	var v2, v3 int32
 	_, _, _, _, _, _, _, _ = X, Y, in32, k, out32_1, out32_2, v2, v3
@@ -14221,22 +14115,22 @@ func Opus_silk_resampler_private_up2_HQ(tls *libc.TLS, S uintptr, out uintptr, i
 			break
 		}
 		/* Convert to Q10 */
-		in32 = libc.Int32FromUint32(libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(in + uintptr(k)*2)))) << libc.Int32FromInt32(10))
+		in32 = int32(input[k]) << 10
 		/* First all-pass section for even output sample */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S))
-		X = int32(int64(Y) * int64(silk_resampler_up2_hq_06[0]) >> libc.Int32FromInt32(16))
-		out32_1 = *(*OpusT_opus_int32)(unsafe.Pointer(S)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S)) = in32 + X
+		Y = in32 - S[0]
+		X = int32(int64(Y) * int64(silk_resampler_up2_hq_06[0]) >> 16)
+		out32_1 = S[0] + X
+		S[0] = in32 + X
 		/* Second all-pass section for even output sample */
-		Y = out32_1 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4))
-		X = int32(int64(Y) * int64(silk_resampler_up2_hq_06[int32(1)]) >> libc.Int32FromInt32(16))
-		out32_2 = *(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 1*4)) = out32_1 + X
+		Y = out32_1 - S[1]
+		X = int32(int64(Y) * int64(silk_resampler_up2_hq_06[1]) >> 16)
+		out32_2 = S[1] + X
+		S[1] = out32_1 + X
 		/* Third all-pass section for even output sample */
-		Y = out32_2 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4))
-		X = int32(int64(Y) + int64(Y)*int64(silk_resampler_up2_hq_06[int32(2)])>>libc.Int32FromInt32(16))
-		out32_1 = *(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 2*4)) = out32_2 + X
+		Y = out32_2 - S[2]
+		X = int32(int64(Y) + (int64(Y) * int64(silk_resampler_up2_hq_06[2]) >> 16))
+		out32_1 = S[2] + X
+		S[2] = out32_2 + X
 		/* Apply gain in Q15, convert back to int16 and store to output */
 		if (out32_1>>(libc.Int32FromInt32(10)-libc.Int32FromInt32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX25) {
 			v2 = int32(silk_int16_MAX25)
@@ -14248,22 +14142,22 @@ func Opus_silk_resampler_private_up2_HQ(tls *libc.TLS, S uintptr, out uintptr, i
 			}
 			v2 = v3
 		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(int32(2)*k)*2)) = int16(v2)
+		output[2*k] = int16(v2)
 		/* First all-pass section for odd output sample */
-		Y = in32 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4))
-		X = int32(int64(Y) * int64(silk_resampler_up2_hq_16[0]) >> libc.Int32FromInt32(16))
-		out32_1 = *(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 3*4)) = in32 + X
+		Y = in32 - S[3]
+		X = int32(int64(Y) * int64(silk_resampler_up2_hq_16[0]) >> 16)
+		out32_1 = S[3] + X
+		S[3] = in32 + X
 		/* Second all-pass section for odd output sample */
-		Y = out32_1 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 4*4))
-		X = int32(int64(Y) * int64(silk_resampler_up2_hq_16[int32(1)]) >> libc.Int32FromInt32(16))
-		out32_2 = *(*OpusT_opus_int32)(unsafe.Pointer(S + 4*4)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 4*4)) = out32_1 + X
+		Y = out32_1 - S[4]
+		X = int32(int64(Y) * int64(silk_resampler_up2_hq_16[1]) >> 16)
+		out32_2 = S[4] + X
+		S[4] = out32_1 + X
 		/* Third all-pass section for odd output sample */
-		Y = out32_2 - *(*OpusT_opus_int32)(unsafe.Pointer(S + 5*4))
-		X = int32(int64(Y) + int64(Y)*int64(silk_resampler_up2_hq_16[int32(2)])>>libc.Int32FromInt32(16))
-		out32_1 = *(*OpusT_opus_int32)(unsafe.Pointer(S + 5*4)) + X
-		*(*OpusT_opus_int32)(unsafe.Pointer(S + 5*4)) = out32_2 + X
+		Y = out32_2 - S[5]
+		X = int32(int64(Y) + (int64(Y) * int64(silk_resampler_up2_hq_16[2]) >> 16))
+		out32_1 = S[5] + X
+		S[5] = out32_2 + X
 		/* Apply gain in Q15, convert back to int16 and store to output */
 		if (out32_1>>(libc.Int32FromInt32(10)-libc.Int32FromInt32(1))+int32(1))>>int32(1) > int32(silk_int16_MAX25) {
 			v2 = int32(silk_int16_MAX25)
@@ -14275,16 +14169,14 @@ func Opus_silk_resampler_private_up2_HQ(tls *libc.TLS, S uintptr, out uintptr, i
 			}
 			v2 = v3
 		}
-		*(*OpusT_opus_int16)(unsafe.Pointer(out + uintptr(int32(2)*k+int32(1))*2)) = int16(v2)
+		output[2*k+1] = int16(v2)
 		k = k + 1
 	}
 }
 
 func Opus_silk_resampler_private_up2_HQ_wrapper(tls *libc.TLS, SS uintptr, out uintptr, in uintptr, len1 OpusT_opus_int32) {
-	var S uintptr
-	_ = S
-	S = SS
-	Opus_silk_resampler_private_up2_HQ(tls, S, out, in, len1)
+	state := (*OpusT_silk_resampler_state_struct)(unsafe.Pointer(SS))
+	Opus_silk_resampler_private_up2_HQ(tls, &state.FsIIR, (*OpusT_opus_int16)(unsafe.Pointer(out)), (*OpusT_opus_int16)(unsafe.Pointer(in)), len1)
 }
 
 const silk_int16_MAX26 = 0x7FFF
@@ -18974,8 +18866,8 @@ func Opus_silk_stereo_find_predictor(tls *libc.TLS, ratio_Q14 uintptr, x2 uintpt
 	var _ /* scale2 at bp+12 */ int32
 	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = a32_nrm, a_headrm, b32_inv, b32_nrm, b_headrm, corr, lshift, lzeros, m, pred2_Q10, pred_Q13, r, result, scale, x, y, v1, v10, v11, v12, v13, v14, v15, v16, v18, v2, v20, v21, v24, v3, v5, v6, v7, v8
 	/* Find  predictor */
-	Opus_silk_sum_sqr_shift(tls, bp+16, bp+8, x2, length)
-	Opus_silk_sum_sqr_shift(tls, bp+20, bp+12, y1, length)
+	Opus_silk_sum_sqr_shift(tls, (*OpusT_opus_int32)(unsafe.Pointer(bp+16)), (*int32)(unsafe.Pointer(bp+8)), (*OpusT_opus_int16)(unsafe.Pointer(x2)), length)
+	Opus_silk_sum_sqr_shift(tls, (*OpusT_opus_int32)(unsafe.Pointer(bp+20)), (*int32)(unsafe.Pointer(bp+12)), (*OpusT_opus_int16)(unsafe.Pointer(y1)), length)
 	v1 = *(*int32)(unsafe.Pointer(bp + 8))
 	v2 = *(*int32)(unsafe.Pointer(bp + 12))
 	if v1 > v2 {
@@ -19419,76 +19311,30 @@ POSSIBILITY OF SUCH DAMAGE.
 //	/* Convert int32 coefficients to int16 coefs and make sure there's no wrap-around.
 //	   This logic is reused in _celt_lpc(). Any bug fixes should also be applied there. */
 
-func Opus_silk_sum_sqr_shift(tls *libc.TLS, energy uintptr, shift uintptr, x uintptr, len1 int32) {
-	var i, shft, v4, v9 int32
-	var nrg, v1, v10, v2, v6, v7 OpusT_opus_int32
-	var nrg_tmp OpusT_opus_uint32
-	_, _, _, _, _, _, _, _, _, _, _ = i, nrg, nrg_tmp, shft, v1, v10, v2, v4, v6, v7, v9
-	/* Do a first run with the maximum shift we could have. */
-	v1 = len1
-	if v1 != 0 {
-		v4 = int32(32) - (libc.Int32FromInt64(4)*libc.Int32FromInt32(__CHAR_BIT__) - libc.X__builtin_clz(tls, libc.Uint32FromInt32(v1)))
-	} else {
-		v4 = int32(32)
-	}
-	v2 = v4
-	shft = int32(31) - v2
-	/* Let's be conservative with rounding and start with nrg=len. */
-	nrg = len1
-	i = 0
-	for {
-		if !(i < len1-int32(1)) {
-			break
+func Opus_silk_sum_sqr_shift(tls *libc.TLS, energy *OpusT_opus_int32, shift *int32, x *OpusT_opus_int16, len1 int32) {
+	input := unsafe.Slice(x, int(len1))
+	shft := int32(31 - bits.LeadingZeros32(uint32(len1)))
+	// Start conservatively, then recompute with two headroom bits.
+	nrg := len1
+	for pass := 0; pass < 2; pass++ {
+		if pass == 1 {
+			shft = max(0, shft+3-int32(bits.LeadingZeros32(uint32(nrg))))
+			nrg = 0
 		}
-		nrg_tmp = libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg_tmp = libc.Uint32FromInt32(libc.Int32FromUint32(nrg_tmp + libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2)))*int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2))))))
-		nrg = libc.Int32FromUint32(libc.Uint32FromInt32(nrg) + nrg_tmp>>shft)
-		i = i + int32(2)
-	}
-	if i < len1 {
-		/* One sample left to process */
-		nrg_tmp = libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg = libc.Int32FromUint32(libc.Uint32FromInt32(nrg) + nrg_tmp>>shft)
-	}
-	_ = nrg >= libc.Int32FromInt32(0)
-	/* Make sure the result will fit in a 32-bit signed integer with two bits
-	   of headroom. */
-	v1 = nrg
-	if v1 != 0 {
-		v4 = int32(32) - (libc.Int32FromInt64(4)*libc.Int32FromInt32(__CHAR_BIT__) - libc.X__builtin_clz(tls, libc.Uint32FromInt32(v1)))
-	} else {
-		v4 = int32(32)
-	}
-	v2 = v4
-	v6 = 0
-	v7 = shft + int32(3) - v2
-	if v6 > v7 {
-		v9 = v6
-	} else {
-		v9 = v7
-	}
-	v10 = v9
-	shft = v10
-	nrg = 0
-	i = 0
-	for {
-		if !(i < len1-int32(1)) {
-			break
+		i := 0
+		for ; i+1 < len(input); i += 2 {
+			a, b := int32(input[i]), int32(input[i+1])
+			// Two squares can set bit 31: preserve unsigned shifting.
+			pair := uint32(a*a) + uint32(b*b)
+			nrg = int32(uint32(nrg) + (pair >> shft))
 		}
-		nrg_tmp = libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg_tmp = libc.Uint32FromInt32(libc.Int32FromUint32(nrg_tmp + libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2)))*int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i+int32(1))*2))))))
-		nrg = libc.Int32FromUint32(libc.Uint32FromInt32(nrg) + nrg_tmp>>shft)
-		i = i + int32(2)
+		if i < len(input) {
+			a := int32(input[i])
+			nrg = int32(uint32(nrg) + (uint32(a*a) >> shft))
+		}
 	}
-	if i < len1 {
-		/* One sample left to process */
-		nrg_tmp = libc.Uint32FromInt32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))) * int32(*(*OpusT_opus_int16)(unsafe.Pointer(x + uintptr(i)*2))))
-		nrg = libc.Int32FromUint32(libc.Uint32FromInt32(nrg) + nrg_tmp>>shft)
-	}
-	_ = nrg >= libc.Int32FromInt32(0)
-	/* Output arguments */
-	*(*int32)(unsafe.Pointer(shift)) = shft
-	*(*OpusT_opus_int32)(unsafe.Pointer(energy)) = nrg
+	*shift = shft
+	*energy = nrg
 }
 
 // C documentation
@@ -20143,7 +19989,7 @@ func silk_LPC_analysis_filter8_FLP(tls *libc.TLS, r_LPC uintptr, PredCoef uintpt
 //
 //	/* 6th order LPC analysis filter, does not write first 6 samples */
 
-func silk_LP_interpolate_filter_taps(tls *libc.TLS, B_Q28 uintptr, A_Q28 uintptr, ind int32, fac_Q16 OpusT_opus_int32) {
+func silk_LP_interpolate_filter_taps(tls *libc.TLS, B_Q28 *[3]OpusT_opus_int32, A_Q28 *[2]OpusT_opus_int32, ind int32, fac_Q16 OpusT_opus_int32) {
 	var na, nb, v3, v4 int32
 	_, _, _, _ = na, nb, v3, v4
 	if ind < libc.Int32FromInt32(TRANSITION_INT_NUM)-libc.Int32FromInt32(1) {
@@ -20155,7 +20001,7 @@ func silk_LP_interpolate_filter_taps(tls *libc.TLS, B_Q28 uintptr, A_Q28 uintptr
 					if !(nb < int32(TRANSITION_NB)) {
 						break
 					}
-					*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + uintptr(nb)*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28)) + uintptr(ind)*12 + uintptr(nb)*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28)) + uintptr(ind+int32(1))*12 + uintptr(nb)*4))-*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28)) + uintptr(ind)*12 + uintptr(nb)*4)))*int64(int16(fac_Q16))>>libc.Int32FromInt32(16))
+					B_Q28[nb] = int32(int64(Opus_silk_Transition_LP_B_Q28[ind][nb]) + ((int64(Opus_silk_Transition_LP_B_Q28[ind+1][nb]-Opus_silk_Transition_LP_B_Q28[ind][nb]) * int64(int16(fac_Q16))) >> 16))
 					nb = nb + 1
 				}
 				na = 0
@@ -20163,7 +20009,7 @@ func silk_LP_interpolate_filter_taps(tls *libc.TLS, B_Q28 uintptr, A_Q28 uintptr
 					if !(na < int32(TRANSITION_NA)) {
 						break
 					}
-					*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + uintptr(na)*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28)) + uintptr(ind)*8 + uintptr(na)*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28)) + uintptr(ind+int32(1))*8 + uintptr(na)*4))-*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28)) + uintptr(ind)*8 + uintptr(na)*4)))*int64(int16(fac_Q16))>>libc.Int32FromInt32(16))
+					A_Q28[na] = int32(int64(Opus_silk_Transition_LP_A_Q28[ind][na]) + ((int64(Opus_silk_Transition_LP_A_Q28[ind+1][na]-Opus_silk_Transition_LP_A_Q28[ind][na]) * int64(int16(fac_Q16))) >> 16))
 					na = na + 1
 				}
 			} else { /* ( fac_Q16 - ( 1 << 16 ) ) is in range of a 16-bit int */
@@ -20184,7 +20030,7 @@ func silk_LP_interpolate_filter_taps(tls *libc.TLS, B_Q28 uintptr, A_Q28 uintptr
 					if !(nb < int32(TRANSITION_NB)) {
 						break
 					}
-					*(*OpusT_opus_int32)(unsafe.Pointer(B_Q28 + uintptr(nb)*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28)) + uintptr(ind+int32(1))*12 + uintptr(nb)*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28)) + uintptr(ind+int32(1))*12 + uintptr(nb)*4))-*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28)) + uintptr(ind)*12 + uintptr(nb)*4)))*int64(int16(fac_Q16-libc.Int32FromInt32(1)<<libc.Int32FromInt32(16)))>>libc.Int32FromInt32(16))
+					B_Q28[nb] = int32(int64(Opus_silk_Transition_LP_B_Q28[ind+1][nb]) + ((int64(Opus_silk_Transition_LP_B_Q28[ind+1][nb]-Opus_silk_Transition_LP_B_Q28[ind][nb]) * int64(int16(fac_Q16-(1<<16)))) >> 16))
 					nb = nb + 1
 				}
 				na = 0
@@ -20192,17 +20038,17 @@ func silk_LP_interpolate_filter_taps(tls *libc.TLS, B_Q28 uintptr, A_Q28 uintptr
 					if !(na < int32(TRANSITION_NA)) {
 						break
 					}
-					*(*OpusT_opus_int32)(unsafe.Pointer(A_Q28 + uintptr(na)*4)) = int32(int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28)) + uintptr(ind+int32(1))*8 + uintptr(na)*4))) + int64(*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28)) + uintptr(ind+int32(1))*8 + uintptr(na)*4))-*(*OpusT_opus_int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28)) + uintptr(ind)*8 + uintptr(na)*4)))*int64(int16(fac_Q16-libc.Int32FromInt32(1)<<libc.Int32FromInt32(16)))>>libc.Int32FromInt32(16))
+					A_Q28[na] = int32(int64(Opus_silk_Transition_LP_A_Q28[ind+1][na]) + ((int64(Opus_silk_Transition_LP_A_Q28[ind+1][na]-Opus_silk_Transition_LP_A_Q28[ind][na]) * int64(int16(fac_Q16-(1<<16)))) >> 16))
 					na = na + 1
 				}
 			}
 		} else {
-			libc.Xmemcpy(tls, B_Q28, uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28))+uintptr(ind)*12, libc.Uint64FromInt32(TRANSITION_NB)*libc.Uint64FromInt64(4))
-			libc.Xmemcpy(tls, A_Q28, uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28))+uintptr(ind)*8, libc.Uint64FromInt32(TRANSITION_NA)*libc.Uint64FromInt64(4))
+			*B_Q28 = Opus_silk_Transition_LP_B_Q28[ind]
+			*A_Q28 = Opus_silk_Transition_LP_A_Q28[ind]
 		}
 	} else {
-		libc.Xmemcpy(tls, B_Q28, uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_B_Q28))+uintptr(libc.Int32FromInt32(TRANSITION_INT_NUM)-libc.Int32FromInt32(1))*12, libc.Uint64FromInt32(TRANSITION_NB)*libc.Uint64FromInt64(4))
-		libc.Xmemcpy(tls, A_Q28, uintptr(unsafe.Pointer(&Opus_silk_Transition_LP_A_Q28))+uintptr(libc.Int32FromInt32(TRANSITION_INT_NUM)-libc.Int32FromInt32(1))*8, libc.Uint64FromInt32(TRANSITION_NA)*libc.Uint64FromInt64(4))
+		*B_Q28 = Opus_silk_Transition_LP_B_Q28[TRANSITION_INT_NUM-1]
+		*A_Q28 = Opus_silk_Transition_LP_A_Q28[TRANSITION_INT_NUM-1]
 	}
 }
 
@@ -20495,7 +20341,7 @@ func silk_PLC_conceal(tls *libc.TLS, psDec uintptr, psDecCtrl uintptr, frame uin
 		rand_Gain_Q15 = int32(PLC_RAND_ATTENUATE_UV_Q15[v55])
 	}
 	/* LPC concealment. Apply BWE to previous LPC */
-	Opus_silk_bwexpander(tls, psPLC+14, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order, int32(float64(libc.Float64FromFloat64(BWE_COEF)*float64(libc.Int64FromInt32(1)<<libc.Int32FromInt32(16)))+libc.Float64FromFloat64(0.5)))
+	Opus_silk_bwexpander(tls, &(*OpusT_silk_PLC_struct)(unsafe.Pointer(psPLC)).FprevLPC_Q12[0], (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order, int32(float64(libc.Float64FromFloat64(BWE_COEF)*float64(libc.Int64FromInt32(1)<<libc.Int32FromInt32(16)))+libc.Float64FromFloat64(0.5)))
 	/* Preload LPC coefficients to array on stack. Gives small performance gain */
 	libc.Xmemcpy(tls, bp+16, psPLC+14, libc.Uint64FromInt32((*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order)*libc.Uint64FromInt64(2))
 	/* First Lost frame */
@@ -20977,8 +20823,8 @@ func silk_PLC_energy(tls *libc.TLS, energy1 uintptr, shift1 uintptr, energy2 uin
 		k = k + 1
 	}
 	/* Find the subframe with lowest energy of the last two and use that as random noise generator */
-	Opus_silk_sum_sqr_shift(tls, energy1, shift1, exc_buf, subfr_length)
-	Opus_silk_sum_sqr_shift(tls, energy2, shift2, exc_buf+uintptr(subfr_length)*2, subfr_length)
+	Opus_silk_sum_sqr_shift(tls, (*OpusT_opus_int32)(unsafe.Pointer(energy1)), (*int32)(unsafe.Pointer(shift1)), (*OpusT_opus_int16)(unsafe.Pointer(exc_buf)), subfr_length)
+	Opus_silk_sum_sqr_shift(tls, (*OpusT_opus_int32)(unsafe.Pointer(energy2)), (*int32)(unsafe.Pointer(shift2)), (*OpusT_opus_int16)(unsafe.Pointer(exc_buf+uintptr(subfr_length)*2)), subfr_length)
 	st = libc.Xpthread_getspecific(tls, libc.Uint32FromUint32(0x6f707573))
 	if !(st != 0) {
 		v1 = libc.Xmalloc(tls, uint64(16))
