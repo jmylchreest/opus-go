@@ -12,20 +12,14 @@ import (
 var _ reflect.Type
 var _ unsafe.Pointer
 
-func Opus_silk_reset_decoder(tls *libc.TLS, psDec uintptr) (r int32) {
-	var v1 int32
-	_ = v1
-	/* Clear the entire encoder state, except anything copied */
-	libc.Xmemset(tls, psDec, 0, uint64(unsafe.Sizeof(OpusT_silk_decoder_state{})))
-	/* Used to deactivate LSF interpolation */
-	(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Ffirst_frame_after_reset = int32(1)
-	(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fprev_gain_Q16 = int32(65536)
-	v1 = 0
-	(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Farch = v1
-	/* Reset CNG state */
-	Opus_silk_CNG_Reset(tls, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)))
-	/* Reset PLC state */
-	Opus_silk_PLC_Reset(tls, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)))
+func Opus_silk_reset_decoder(tls *libc.TLS, dec *OpusT_silk_decoder_state) int32 {
+	// This build has no pre-reset OSCE fields; reset starts at prev_gain_Q16.
+	*dec = OpusT_silk_decoder_state{}
+	dec.Ffirst_frame_after_reset = 1
+	dec.Fprev_gain_Q16 = 65536
+	// The translated decoder uses the scalar implementation (arch == 0).
+	Opus_silk_CNG_Reset(tls, dec)
+	Opus_silk_PLC_Reset(tls, dec)
 	return 0
 }
 
@@ -34,11 +28,8 @@ func Opus_silk_reset_decoder(tls *libc.TLS, psDec uintptr) (r int32) {
 //	/************************/
 //	/* Init Decoder State   */
 //	/************************/
-func Opus_silk_init_decoder(tls *libc.TLS, psDec uintptr) (r int32) {
-	/* Clear the entire encoder state, except anything copied */
-	libc.Xmemset(tls, psDec, 0, uint64(unsafe.Sizeof(OpusT_silk_decoder_state{})))
-	Opus_silk_reset_decoder(tls, psDec)
-	return 0
+func Opus_silk_init_decoder(tls *libc.TLS, dec *OpusT_silk_decoder_state) int32 {
+	return Opus_silk_reset_decoder(tls, dec)
 }
 
 const silk_int16_MAX3 = 32767
@@ -558,7 +549,7 @@ func Opus_silk_decode_core(tls *libc.TLS, psDec uintptr, psDecCtrl uintptr, xq u
 				if k == int32(2) {
 					libc.Xmemcpy(tls, psDec+1348+uintptr((*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fltp_mem_length)*2, xq, uint64(uint32(int32(2)*(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fsubfr_length))*uint64(2))
 				}
-				Opus_silk_LPC_analysis_filter(tls, sLTP+uintptr(start_idx)*2, psDec+1348+uintptr(start_idx+k*(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fsubfr_length)*2, A_Q12, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fltp_mem_length-start_idx, (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).FLPC_order, arch)
+				Opus_silk_LPC_analysis_filter(tls, (*OpusT_opus_int16)(unsafe.Pointer(sLTP+uintptr(start_idx)*2)), &decoder.FoutBuf[start_idx+k*decoder.Fsubfr_length], (*OpusT_opus_int16)(unsafe.Pointer(A_Q12)), decoder.Fltp_mem_length-start_idx, decoder.FLPC_order, arch)
 				/* After rewhitening the LTP state is unscaled */
 				if k == 0 {
 					/* Do LTP downscaling to reduce inter-packet dependency */
