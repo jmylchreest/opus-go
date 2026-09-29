@@ -28,7 +28,7 @@ func Opus_silk_decoder_set_fs(tls *libc.TLS, psDec uintptr, fs_kHz int32, fs_API
 	/* Initialize resampler when switching internal or external sampling frequency */
 	if (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Ffs_kHz != fs_kHz || (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Ffs_API_hz != fs_API_Hz {
 		/* Initialize the resampler for dec_API.c preparing resampling from fs_kHz to API_fs_Hz */
-		ret = ret + Opus_silk_resampler_init(tls, uintptr(unsafe.Pointer(&(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fresampler_state)), int32(int16(fs_kHz))*int32(int16(int32(1000))), fs_API_Hz, 0)
+		ret = ret + Opus_silk_resampler_init(tls, &(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fresampler_state, int32(int16(fs_kHz))*int32(int16(int32(1000))), fs_API_Hz, 0)
 		(*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Ffs_API_hz = fs_API_Hz
 	}
 	if (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Ffs_kHz != fs_kHz || frame_length != (*OpusT_silk_decoder_state)(unsafe.Pointer(psDec)).Fframe_length {
@@ -135,7 +135,7 @@ type OpusT_silk_decoder = struct {
 /*********************/
 /* Decoder functions */
 /*********************/
-func Opus_silk_LoadOSCEModels(tls *libc.TLS, decState uintptr, data uintptr, len1 int32) (r int32) {
+func Opus_silk_LoadOSCEModels(tls *libc.TLS, decState *OpusT_silk_decoder, data *byte, len1 int32) (r int32) {
 	_ = decState
 	_ = data
 	_ = len1
@@ -150,45 +150,24 @@ func Opus_silk_Get_Decoder_Size(tls *libc.TLS, decSizeBytes *int32) (r int32) {
 // C documentation
 //
 //	/* Reset decoder state */
-func Opus_silk_ResetDecoder(tls *libc.TLS, decState uintptr) (r int32) {
-	var channel_state uintptr
-	var n, ret int32
-	_, _, _ = channel_state, n, ret
-	ret = SILK_NO_ERROR
-	channel_state = decState
-	n = 0
-	for {
-		if !(n < int32(DECODER_NUM_CHANNELS)) {
-			break
-		}
-		ret = Opus_silk_reset_decoder(tls, (*OpusT_silk_decoder_state)(unsafe.Pointer(channel_state+uintptr(n)*unsafe.Sizeof(OpusT_silk_decoder_state{}))))
-		n = n + 1
+func Opus_silk_ResetDecoder(tls *libc.TLS, decState *OpusT_silk_decoder) int32 {
+	ret := int32(SILK_NO_ERROR)
+	for n := range decState.Fchannel_state {
+		ret = Opus_silk_reset_decoder(tls, &decState.Fchannel_state[n])
 	}
-	(*OpusT_silk_decoder)(unsafe.Pointer(decState)).FsStereo = OpusT_stereo_dec_state{}
-	/* Not strictly needed, but it's cleaner that way */
-	(*OpusT_silk_decoder)(unsafe.Pointer(decState)).Fprev_decode_only_middle = 0
+	decState.FsStereo = OpusT_stereo_dec_state{}
+	decState.Fprev_decode_only_middle = 0
 	return ret
 }
 
-func Opus_silk_InitDecoder(tls *libc.TLS, decState uintptr) (r int32) {
-	var channel_state uintptr
-	var n, ret int32
-	_, _, _ = channel_state, n, ret
-	ret = SILK_NO_ERROR
-	channel_state = decState
-	/* load osce models */
-	Opus_silk_LoadOSCEModels(tls, decState, uintptr(uint32(0)), 0)
-	n = 0
-	for {
-		if !(n < int32(DECODER_NUM_CHANNELS)) {
-			break
-		}
-		ret = Opus_silk_init_decoder(tls, (*OpusT_silk_decoder_state)(unsafe.Pointer(channel_state+uintptr(n)*unsafe.Sizeof(OpusT_silk_decoder_state{}))))
-		n = n + 1
+func Opus_silk_InitDecoder(tls *libc.TLS, decState *OpusT_silk_decoder) int32 {
+	ret := int32(SILK_NO_ERROR)
+	Opus_silk_LoadOSCEModels(tls, decState, nil, 0)
+	for n := range decState.Fchannel_state {
+		ret = Opus_silk_init_decoder(tls, &decState.Fchannel_state[n])
 	}
-	(*OpusT_silk_decoder)(unsafe.Pointer(decState)).FsStereo = OpusT_stereo_dec_state{}
-	/* Not strictly needed, but it's cleaner that way */
-	(*OpusT_silk_decoder)(unsafe.Pointer(decState)).Fprev_decode_only_middle = 0
+	decState.FsStereo = OpusT_stereo_dec_state{}
+	decState.Fprev_decode_only_middle = 0
 	return ret
 }
 
@@ -644,7 +623,7 @@ func Opus_silk_Decode(tls *libc.TLS, decState uintptr, decControl uintptr, lostF
 			break
 		}
 		/* Resample decoded signal to API_sampleRate */
-		ret = ret + Opus_silk_resampler(tls, uintptr(unsafe.Pointer(&decoder.Fchannel_state[n].Fresampler_state)), resample_out_ptr, samplesOut1_tmp[n]+1*2, nSamplesOutDec)
+		ret = ret + Opus_silk_resampler(tls, &decoder.Fchannel_state[n].Fresampler_state, (*int16)(unsafe.Pointer(resample_out_ptr)), (*int16)(unsafe.Pointer(samplesOut1_tmp[n]+2)), nSamplesOutDec)
 		/* Interleave if stereo output and stereo stream */
 		if (*OpusT_silk_DecControlStruct)(unsafe.Pointer(decControl)).FnChannelsAPI == int32(2) {
 			i = 0
@@ -672,7 +651,7 @@ func Opus_silk_Decode(tls *libc.TLS, decState uintptr, decControl uintptr, lostF
 		if stereo_to_mono != 0 {
 			/* Resample right channel for newly collapsed stereo just in case
 			   we weren't doing collapsing when switching to mono */
-			ret = ret + Opus_silk_resampler(tls, uintptr(unsafe.Pointer(&decoder.Fchannel_state[1].Fresampler_state)), resample_out_ptr, samplesOut1_tmp[0]+1*2, nSamplesOutDec)
+			ret = ret + Opus_silk_resampler(tls, &decoder.Fchannel_state[1].Fresampler_state, (*int16)(unsafe.Pointer(resample_out_ptr)), (*int16)(unsafe.Pointer(samplesOut1_tmp[0]+2)), nSamplesOutDec)
 			i = 0
 			for {
 				if !(i < *(*OpusT_opus_int32)(unsafe.Pointer(nSamplesOut))) {

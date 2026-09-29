@@ -114,7 +114,12 @@ CELT exponential rotation, and fractional entropy-bit accounting (all normalized
 updates, probability-coded bits, raw tail bits, and unsigned integers, including
 normalization, exhausted packets, overlapping front/tail reads, and invalid-value
 clamping. These tests copy context fields explicitly across the C boundary;
-`Fbuf` remains a legacy `uintptr`, with its test buffer owner explicitly retained.
+`opuscc` entropy contexts now carry a typed `Fbuf`; legacy context addresses and
+untyped scratch allocations elsewhere still require ownership care. Initialization
+compares every numeric field, including the deliberately preserved `ext`, across
+short/exhausted packets. Go ownership tests force GC and stack growth with the
+context as the sole packet owner. Shared encoder-buffer adaptations compare
+shrink/move, final padding/tail writes, and complete numeric state against C.
 SILK decoder comparisons also cover NLSF unpacking/reconstruction/stabilization,
 LPC coefficient fitting (including input updates), and shell pulse decoding with
 all numeric entropy-state fields checked. Additional decoder tests cover 16-bit
@@ -180,6 +185,35 @@ NaN/infinity clamping, Q15 product rounding, and wrapping output accumulation.
 Projection int24 output checks finite inputs within C's int32 conversion domain,
 including values beyond normalized unity, ties-to-even conversion, 64-bit
 products, asymmetric Q15 half rounding, and int32 accumulation narrowing.
+Smooth fades compare exactly with a scalar C reference of `opus_decoder.c`,
+covering supported sample rates, channel-major stores, and partial buffer overlap.
+Packet-duration queries exhaust all TOC/count-byte combinations at supported
+rates against libopus, including short headers and the 120 ms limit.
+Aggregate SILK init/reset compares the actual `dec_API.c` path, both channel
+states and stereo history, while checking that channel-count metadata survives.
+Native CPU dispatch is excluded, as in the per-channel reset comparisons.
+Soft clipping compares PCM and persistent history bit-for-bit with libopus across
+consecutive frames, ramp correction, impulses, clipping runs, zero crossings,
+signed zero, NaNs/infinities, multiple channels, and guarded output/state buffers.
+Resampler initialization compares the complete state and coefficient selection
+against `resampler.c` for all 30 supported encoder/decoder rate pairs; guard tests
+also cover the smaller 386 state layout.
+The top-level resampler driver additionally compares PCM and the complete state
+across consecutive 1/2/10/11/21/30 ms calls for all supported rate pairs, including
+copy mode, delay compensation, and empty second batches.
+The low-quality 2/3 resampler compares PCM and all six state words, including
+full-range initial state, saturation, in-place operation, 480-sample batch edges,
+and the un-emitted one/two-sample remainders (C emits two samples per triple).
+The exported mapping-matrix data accessor compares aligned coefficient addresses
+and contents with C; a Go test retains only the returned pointer across GC.
+Float matrix input multiplication compares every selected row, input/output
+strides (including zero), empty dot products, guard values and overlapping buffers
+bit-for-bit with C.
+Int16 matrix input comparisons additionally cover extreme integer products and
+255-column accumulations, preserving conversion to float32 after each product.
+Int24 matrix input tests include 24-bit limits, float32 integer-rounding boundaries,
+and full int32 values; comparisons retain the float32 accumulator and two scaling
+steps, with no added 24-bit clipping.
 Float-to-PCM conversion, VAD initialization,
 Laroia weights, sum-of-squares, bandwidth expansion (16/32-bit), 2:1 downsampling,
 analysis filter bank, high-quality 2× upsampling, mono/stereo biquads, low-pass

@@ -829,7 +829,7 @@ type OpusT_double_t = float64
 type OpusT_ec_window = uint32
 
 type OpusT_ec_ctx = struct {
-	Fbuf         uintptr
+	Fbuf         *byte
 	Fstorage     OpusT_opus_uint32
 	Fend_offs    OpusT_opus_uint32
 	Fend_window  OpusT_ec_window
@@ -844,7 +844,7 @@ type OpusT_ec_ctx = struct {
 }
 
 type OpusT_ec_enc = struct {
-	Fbuf         uintptr
+	Fbuf         *byte
 	Fstorage     OpusT_opus_uint32
 	Fend_offs    OpusT_opus_uint32
 	Fend_window  OpusT_ec_window
@@ -861,7 +861,7 @@ type OpusT_ec_enc = struct {
 type ec_ctx = OpusT_ec_enc
 
 type OpusT_ec_dec = struct {
-	Fbuf         uintptr
+	Fbuf         *byte
 	Fstorage     OpusT_opus_uint32
 	Fend_offs    OpusT_opus_uint32
 	Fend_window  OpusT_ec_window
@@ -1051,140 +1051,77 @@ type OpusT_opus_copy_channel_out_func = uintptr
 
 type OpusT_downmix_func = uintptr
 
-func Opus_opus_pcm_soft_clip_impl(tls *libc.TLS, _x uintptr, N int32, C int32, declip_mem uintptr, arch int32) {
-	var a, delta, maxval, offset, x0, v7, v8, v9 float32
-	var all_within_neg1pos1, c, curr, end, i, peak_pos, special, start, v4 int32
-	var x uintptr
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = a, all_within_neg1pos1, c, curr, delta, end, i, maxval, offset, peak_pos, special, start, x, x0, v4, v7, v8, v9
-	if C < int32(1) || N < int32(1) || !(_x != 0) || !(declip_mem != 0) {
+func Opus_opus_pcm_soft_clip_impl(tls *libc.TLS, pcm *float32, N, C int32, declip_mem *float32, arch int32) {
+	if C < 1 || N < 1 || pcm == nil || declip_mem == nil {
 		return
 	}
-	/* Clamp everything within the range [-2, +2] which is the domain of the soft
-	      clipping non-linearity. Outside the defined range the derivative will be zero,
-	      therefore there is no discontinuity introduced here. The implementation
-	      might provide a hint if all input samples are within the [-1, +1] range.
-	   `opus_limit2_checkwithin1()`:
-	      - Clamps all samples within the valid range [-2, +2].
-	      - Generic C implementation:
-	         * Does not attempt early detection whether samples are within hinted range.
-	         * Always returns 0.
-	      - Architecture specific implementation:
-	         * Uses SIMD instructions to efficiently detect if all samples are
-	           within the hinted range [-1, +1].
-	         * Returns 1 if no samples exceed the hinted range, 0 otherwise.
-	   `all_within_neg1pos1`:
-	      - Optimization hint to skip per-sample out-of-bound checks.
-	        If true, the check can be skipped. */
 	_ = arch
-	all_within_neg1pos1 = Opus_opus_limit2_checkwithin1_c(tls, (*float32)(unsafe.Pointer(_x)), N*C)
-	c = 0
-	for {
-		if !(c < C) {
-			break
+	values, memory := unsafe.Slice(pcm, N*C), unsafe.Slice(declip_mem, C)
+	allWithin := Opus_opus_limit2_checkwithin1_c(tls, pcm, N*C)
+	for c := int32(0); c < C; c++ {
+		x := values[c:]
+		a := memory[c]
+		// Continue the previous frame's non-linearity through the first crossing.
+		for i := int32(0); i < N; i++ {
+			if float32(x[i*C]*a) >= 0 {
+				break
+			}
+			x[i*C] = x[i*C] + float32(float32(a*x[i*C])*x[i*C])
 		}
-		x = _x + uintptr(c)*4
-		a = *(*float32)(unsafe.Pointer(declip_mem + uintptr(c)*4))
-		/* Continue applying the non-linearity from the previous frame to avoid
-		   any discontinuity. */
-		i = 0
+		curr := int32(0)
+		x0 := x[0]
 		for {
-			if !(i < N) {
-				break
-			}
-			if float32(*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4))*a) >= float32(0) {
-				break
-			}
-			*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) = *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) + float32(float32(a**(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)))**(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)))
-			i = i + 1
-		}
-		curr = 0
-		x0 = *(*float32)(unsafe.Pointer(x))
-		for int32(1) != 0 {
-			special = 0
-			/* Detection for early exit can be skipped if hinted by `all_within_neg1pos1` */
-			if all_within_neg1pos1 != 0 {
+			i := curr
+			if allWithin != 0 {
 				i = N
 			} else {
-				i = curr
-				for {
-					if !(i < N) {
+				for i < N {
+					if x[i*C] > 1 || x[i*C] < -1 {
 						break
 					}
-					if *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) > float32(1) || *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) < float32(-int32(1)) {
-						break
-					}
-					i = i + 1
+					i++
 				}
 			}
 			if i == N {
-				a = float32(0)
+				a = 0
 				break
 			}
-			peak_pos = i
-			v4 = i
-			end = v4
-			start = v4
-			maxval = float32(libc.Xfabs(tls, float64(*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)))))
-			/* Look for first zero crossing before clipping */
-			for start > 0 && float32(*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4))**(*float32)(unsafe.Pointer(x + uintptr((start-int32(1))*C)*4))) >= float32(0) {
-				start = start - 1
+			start, end, peak := i, i, i
+			maxval := float32(libc.Xfabs(tls, float64(x[i*C])))
+			for start > 0 && float32(x[i*C]*x[(start-1)*C]) >= 0 {
+				start--
 			}
-			/* Look for first zero crossing after clipping */
-			for end < N && float32(*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4))**(*float32)(unsafe.Pointer(x + uintptr(end*C)*4))) >= float32(0) {
-				/* Look for other peaks until the next zero-crossing. */
-				if float32(libc.Xfabs(tls, float64(*(*float32)(unsafe.Pointer(x + uintptr(end*C)*4))))) > maxval {
-					maxval = float32(libc.Xfabs(tls, float64(*(*float32)(unsafe.Pointer(x + uintptr(end*C)*4)))))
-					peak_pos = end
+			for end < N && float32(x[i*C]*x[end*C]) >= 0 {
+				v := float32(libc.Xfabs(tls, float64(x[end*C])))
+				if v > maxval {
+					maxval = v
+					peak = end
 				}
-				end = end + 1
+				end++
 			}
-			/* Detect the special case where we clip before the first zero crossing */
-			special = libc.BoolInt32(start == 0 && float32(*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4))**(*float32)(unsafe.Pointer(x))) >= float32(0))
-			/* Compute a such that maxval + a*maxval^2 = 1 */
+			special := start == 0 && float32(x[i*C]*x[0]) >= 0
 			a = (maxval - float32(1)) / float32(maxval*maxval)
-			/* Slightly boost "a" by 2^-22. This is just enough to ensure -ffast-math
-			   does not cause output values larger than +/-1, but small enough not
-			   to matter even for 24-bit output.  */
-			a = a + float32(a*float32(2.4e-07))
-			if *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) > float32(0) {
+			// Preserve the float32 boost and every multiply's rounding.
+			a += float32(a * float32(2.4e-7))
+			if x[i*C] > 0 {
 				a = -a
 			}
-			/* Apply soft clipping */
-			i = start
-			for {
-				if !(i < end) {
-					break
-				}
-				*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) = *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) + float32(float32(a**(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)))**(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)))
-				i = i + 1
+			for j := start; j < end; j++ {
+				x[j*C] = x[j*C] + float32(float32(a*x[j*C])*x[j*C])
 			}
-			if special != 0 && peak_pos >= int32(2) {
-				offset = x0 - *(*float32)(unsafe.Pointer(x))
-				delta = offset / float32(peak_pos)
-				i = curr
-				for {
-					if !(i < peak_pos) {
-						break
+			if special && peak >= 2 {
+				offset := x0 - x[0]
+				delta := offset / float32(peak)
+				for j := curr; j < peak; j++ {
+					offset -= delta
+					x[j*C] += offset
+					// C MIN/MAX comparisons preserve NaNs here.
+					if x[j*C] > 1 {
+						x[j*C] = 1
 					}
-					offset = offset - delta
-					*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) += offset
-					if float32(1) < *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) {
-						v8 = float32(1)
-					} else {
-						v8 = *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4))
+					if x[j*C] < -1 {
+						x[j*C] = -1
 					}
-					if -float32(1) > v8 {
-						v7 = -float32(1)
-					} else {
-						if float32(1) < *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) {
-							v9 = float32(1)
-						} else {
-							v9 = *(*float32)(unsafe.Pointer(x + uintptr(i*C)*4))
-						}
-						v7 = v9
-					}
-					*(*float32)(unsafe.Pointer(x + uintptr(i*C)*4)) = v7
-					i = i + 1
 				}
 			}
 			curr = end
@@ -1192,12 +1129,11 @@ func Opus_opus_pcm_soft_clip_impl(tls *libc.TLS, _x uintptr, N int32, C int32, d
 				break
 			}
 		}
-		*(*float32)(unsafe.Pointer(declip_mem + uintptr(c)*4)) = a
-		c = c + 1
+		memory[c] = a
 	}
 }
 
-func Opus_opus_pcm_soft_clip(tls *libc.TLS, _x uintptr, N int32, C int32, declip_mem uintptr) {
+func Opus_opus_pcm_soft_clip(tls *libc.TLS, _x *float32, N int32, C int32, declip_mem *float32) {
 	Opus_opus_pcm_soft_clip_impl(tls, _x, N, C, declip_mem, 0)
 }
 
@@ -2358,7 +2294,7 @@ func Opus_opus_decoder_init(tls *libc.TLS, st uintptr, Fs OpusT_opus_int32, chan
 	decoder.FDecControl.FAPI_sampleRate = decoder.FFs
 	decoder.FDecControl.FnChannelsAPI = decoder.Fchannels
 	/* Reset decoder */
-	ret = Opus_silk_InitDecoder(tls, silk_dec)
+	ret = Opus_silk_InitDecoder(tls, (*OpusT_silk_decoder)(unsafe.Pointer(silk_dec)))
 	if ret != 0 {
 		return -int32(3)
 	}
@@ -2401,26 +2337,21 @@ func Opus_opus_decoder_create(tls *libc.TLS, Fs OpusT_opus_int32, channels int32
 	return st, nil
 }
 
-func smooth_fade(tls *libc.TLS, in1 uintptr, in2 uintptr, out uintptr, overlap int32, channels int32, window uintptr, Fs OpusT_opus_int32) {
-	var c, i, inc int32
-	var w OpusT_celt_coef
-	_, _, _, _ = c, i, inc, w
-	inc = int32(48000) / Fs
-	c = 0
-	for {
-		if !(c < channels) {
-			break
+func smooth_fade(tls *libc.TLS, in1, in2, out *OpusT_opus_res, overlap, channels int32, window *OpusT_celt_coef, Fs OpusT_opus_int32) {
+	inc := int32(48000) / Fs
+	if overlap <= 0 || channels <= 0 {
+		return
+	}
+	a, b := unsafe.Slice(in1, overlap*channels), unsafe.Slice(in2, overlap*channels)
+	dst := unsafe.Slice(out, overlap*channels)
+	win := unsafe.Slice(window, (overlap-1)*inc+1)
+	// Keep channel-major stores, including when the buffers overlap.
+	for c := int32(0); c < channels; c++ {
+		for i := int32(0); i < overlap; i++ {
+			w := float32(win[i*inc] * win[i*inc])
+			idx := i*channels + c
+			dst[idx] = float32(w*b[idx]) + float32((float32(1)-w)*a[idx])
 		}
-		i = 0
-		for {
-			if !(i < overlap) {
-				break
-			}
-			w = OpusT_celt_coef(*(*OpusT_celt_coef)(unsafe.Pointer(window + uintptr(i*inc)*4)) * *(*OpusT_celt_coef)(unsafe.Pointer(window + uintptr(i*inc)*4)))
-			*(*OpusT_opus_res)(unsafe.Pointer(out + uintptr(i*channels+c)*4)) = OpusT_celt_coef(w**(*OpusT_opus_res)(unsafe.Pointer(in2 + uintptr(i*channels+c)*4))) + float32((float32(1)-w)**(*OpusT_opus_res)(unsafe.Pointer(in1 + uintptr(i*channels+c)*4)))
-			i = i + 1
-		}
-		c = c + 1
 	}
 }
 
@@ -2574,7 +2505,7 @@ func opus_decode_frame(tls *libc.TLS, st1 uintptr, data uintptr, len1 OpusT_opus
 		audiosize = decoder.Fframe_size
 		mode = decoder.Fmode
 		bandwidth = decoder.Fbandwidth
-		Opus_ec_dec_init(tls, uintptr(unsafe.Pointer(&dec)), data, uint32(len1))
+		Opus_ec_dec_init(tls, &dec, (*byte)(unsafe.Pointer(data)), uint32(len1))
 	} else {
 		audiosize = frame_size
 		/* Run PLC using last used mode (CELT if we ended with CELT redundancy) */
@@ -2844,7 +2775,7 @@ func opus_decode_frame(tls *libc.TLS, st1 uintptr, data uintptr, len1 OpusT_opus
 			pcm_ptr = pcm
 		}
 		if decoder.Fprev_mode == int32(MODE_CELT_ONLY) {
-			Opus_silk_ResetDecoder(tls, silk_dec)
+			Opus_silk_ResetDecoder(tls, (*OpusT_silk_decoder)(unsafe.Pointer(silk_dec)))
 		}
 		/* The SILK PLC cannot produce frames of less than 10 ms */
 		if int32(10) > int32(1000)*audiosize/decoder.FFs {
@@ -3229,7 +3160,7 @@ func opus_decode_frame(tls *libc.TLS, st1 uintptr, data uintptr, len1 OpusT_opus
 		if !(Opus_opus_custom_decoder_ctl(tls, celt_dec, int32(OPUS_GET_FINAL_RANGE_REQUEST), libc.VaList(uintptr(unsafe.Pointer(&va)), uintptr(unsafe.Pointer(&redundant_rng)))) == int32(OPUS_OK)) {
 			Opus_celt_fatal(tls, __ccgo_ts+1454, __ccgo_ts+57, int32(643))
 		}
-		smooth_fade(tls, pcm+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*(frame_size-F2_5))*4, redundant_audio+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*F2_5)*4, pcm+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*(frame_size-F2_5))*4, F2_5, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels, window, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).FFs)
+		smooth_fade(tls, (*float32)(unsafe.Pointer(pcm+uintptr(decoder.Fchannels*(frame_size-F2_5))*4)), (*float32)(unsafe.Pointer(redundant_audio+uintptr(decoder.Fchannels*F2_5)*4)), (*float32)(unsafe.Pointer(pcm+uintptr(decoder.Fchannels*(frame_size-F2_5))*4)), F2_5, decoder.Fchannels, (*float32)(unsafe.Pointer(window)), decoder.FFs)
 	}
 	/* 5ms redundant frame for CELT->SILK; ignore if the previous frame did not
 	   use CELT (the first redundancy frame in a transition from SILK may have
@@ -3250,7 +3181,7 @@ func opus_decode_frame(tls *libc.TLS, st1 uintptr, data uintptr, len1 OpusT_opus
 			}
 			c = c + 1
 		}
-		smooth_fade(tls, redundant_audio+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*F2_5)*4, pcm+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*F2_5)*4, pcm+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*F2_5)*4, F2_5, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels, window, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).FFs)
+		smooth_fade(tls, (*float32)(unsafe.Pointer(redundant_audio+uintptr(decoder.Fchannels*F2_5)*4)), (*float32)(unsafe.Pointer(pcm+uintptr(decoder.Fchannels*F2_5)*4)), (*float32)(unsafe.Pointer(pcm+uintptr(decoder.Fchannels*F2_5)*4)), F2_5, decoder.Fchannels, (*float32)(unsafe.Pointer(window)), decoder.FFs)
 	}
 	if transition != 0 {
 		if audiosize >= F5 {
@@ -3262,14 +3193,14 @@ func opus_decode_frame(tls *libc.TLS, st1 uintptr, data uintptr, len1 OpusT_opus
 				*(*OpusT_opus_res)(unsafe.Pointer(pcm + uintptr(i)*4)) = *(*OpusT_opus_res)(unsafe.Pointer(pcm_transition + uintptr(i)*4))
 				i = i + 1
 			}
-			smooth_fade(tls, pcm_transition+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*F2_5)*4, pcm+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*F2_5)*4, pcm+uintptr((*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels*F2_5)*4, F2_5, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels, window, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).FFs)
+			smooth_fade(tls, (*float32)(unsafe.Pointer(pcm_transition+uintptr(decoder.Fchannels*F2_5)*4)), (*float32)(unsafe.Pointer(pcm+uintptr(decoder.Fchannels*F2_5)*4)), (*float32)(unsafe.Pointer(pcm+uintptr(decoder.Fchannels*F2_5)*4)), F2_5, decoder.Fchannels, (*float32)(unsafe.Pointer(window)), decoder.FFs)
 		} else {
 			/* Not enough time to do a clean transition, but we do it anyway
 			   This will not preserve amplitude perfectly and may introduce
 			   a bit of temporal aliasing, but it shouldn't be too bad and
 			   that's pretty much the best we can do. In any case, generating this
 			   transition it pretty silly in the first place */
-			smooth_fade(tls, pcm_transition, pcm, pcm, F2_5, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fchannels, window, (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).FFs)
+			smooth_fade(tls, (*float32)(unsafe.Pointer(pcm_transition)), (*float32)(unsafe.Pointer(pcm)), (*float32)(unsafe.Pointer(pcm)), F2_5, decoder.Fchannels, (*float32)(unsafe.Pointer(window)), decoder.FFs)
 		}
 	}
 	if (*OpusT_OpusDecoder)(unsafe.Pointer(st1)).Fdecode_gain != 0 {
@@ -3445,7 +3376,7 @@ func Opus_opus_decode_native(tls *libc.TLS, st uintptr, data uintptr, len1 OpusT
 	if v1 != 0 {
 	}
 	if soft_clip != 0 {
-		Opus_opus_pcm_soft_clip_impl(tls, pcm, nb_samples, decoder.Fchannels, uintptr(unsafe.Pointer(&decoder.Fsoftclip_mem[0])), decoder.Farch)
+		Opus_opus_pcm_soft_clip_impl(tls, (*float32)(unsafe.Pointer(pcm)), nb_samples, decoder.Fchannels, &decoder.Fsoftclip_mem[0], decoder.Farch)
 	} else {
 		v8 = float32(0)
 		decoder.Fsoftclip_mem[1] = v8
@@ -3873,7 +3804,7 @@ func Opus_opus_decoder_ctl(tls *libc.TLS, st uintptr, request int32, va uintptr)
 	case int32(OPUS_RESET_STATE):
 		libc.Xmemset(tls, uintptr(unsafe.Pointer(&decoder.Fstream_channels)), 0, uint64(unsafe.Sizeof(OpusT_OpusDecoder{})-unsafe.Offsetof(decoder.Fstream_channels)))
 		Opus_opus_custom_decoder_ctl(tls, celt_dec, int32(OPUS_RESET_STATE), 0)
-		Opus_silk_ResetDecoder(tls, silk_dec)
+		Opus_silk_ResetDecoder(tls, (*OpusT_silk_decoder)(unsafe.Pointer(silk_dec)))
 		decoder.Fstream_channels = decoder.Fchannels
 		decoder.Fframe_size = decoder.FFs / int32(400)
 	case int32(OPUS_GET_SAMPLE_RATE_REQUEST):
@@ -3993,21 +3924,17 @@ func Opus_opus_packet_get_nb_frames(tls *libc.TLS, packet *byte, len1 OpusT_opus
 	return int32(unsafe.Slice(packet, 2)[1] & 0x3f)
 }
 
-func Opus_opus_packet_get_nb_samples(tls *libc.TLS, packet uintptr, len1 OpusT_opus_int32, Fs OpusT_opus_int32) (r int32) {
-	var count, samples int32
-	_, _ = count, samples
-	count = Opus_opus_packet_get_nb_frames(tls, (*byte)(unsafe.Pointer(packet)), len1)
+func Opus_opus_packet_get_nb_samples(tls *libc.TLS, packet *byte, len1 OpusT_opus_int32, Fs OpusT_opus_int32) int32 {
+	count := Opus_opus_packet_get_nb_frames(tls, packet, len1)
 	if count < 0 {
 		return count
 	}
-	samples = count * Opus_opus_packet_get_samples_per_frame(tls, (*byte)(unsafe.Pointer(packet)), Fs)
-	/* Can't have more than 120 ms */
-	if samples*int32(25) > Fs*int32(3) {
-		return -int32(4)
-	} else {
-		return samples
+	samples := count * Opus_opus_packet_get_samples_per_frame(tls, packet, Fs)
+	// Can't have more than 120 ms.
+	if samples*25 > Fs*3 {
+		return -4
 	}
-	return r
+	return samples
 }
 
 func Opus_opus_packet_has_lbrr(tls *libc.TLS, packet uintptr, len1 OpusT_opus_int32) (r int32) {
@@ -4040,7 +3967,7 @@ func Opus_opus_packet_has_lbrr(tls *libc.TLS, packet uintptr, len1 OpusT_opus_in
 }
 
 func Opus_opus_decoder_get_nb_samples(tls *libc.TLS, dec uintptr, packet uintptr, len1 OpusT_opus_int32) (r int32) {
-	return Opus_opus_packet_get_nb_samples(tls, packet, len1, (*OpusT_OpusDecoder)(unsafe.Pointer(dec)).FFs)
+	return Opus_opus_packet_get_nb_samples(tls, (*byte)(unsafe.Pointer(packet)), len1, (*OpusT_OpusDecoder)(unsafe.Pointer(dec)).FFs)
 }
 
 type OpusDREDDecoder = struct {
@@ -4471,7 +4398,7 @@ func opus_multistream_packet_validate(tls *libc.TLS, data uintptr, len1 OpusT_op
 		if count < 0 {
 			return count
 		}
-		tmp_samples = Opus_opus_packet_get_nb_samples(tls, data, parsed.packetOffset, Fs)
+		tmp_samples = Opus_opus_packet_get_nb_samples(tls, (*byte)(unsafe.Pointer(data)), parsed.packetOffset, Fs)
 		if s != 0 && samples != tmp_samples {
 			return -int32(4)
 		}
@@ -5172,8 +5099,8 @@ func mappingMatrixData(matrix *OpusT_MappingMatrix) *int16 {
 	return (*int16)(unsafe.Add(unsafe.Pointer(matrix), 16))
 }
 
-func Opus_mapping_matrix_get_data(tls *libc.TLS, matrix uintptr) uintptr {
-	return uintptr(unsafe.Pointer(mappingMatrixData((*OpusT_MappingMatrix)(unsafe.Pointer(matrix)))))
+func Opus_mapping_matrix_get_data(tls *libc.TLS, matrix *OpusT_MappingMatrix) *int16 {
+	return mappingMatrixData(matrix)
 }
 
 func Opus_mapping_matrix_init(tls *libc.TLS, matrix *OpusT_MappingMatrix, rows, cols, gain int32, data *int16, data_size OpusT_opus_int32) {
@@ -5192,31 +5119,23 @@ func Opus_mapping_matrix_init(tls *libc.TLS, matrix *OpusT_MappingMatrix, rows, 
 	}
 }
 
-func Opus_mapping_matrix_multiply_channel_in_float(tls *libc.TLS, matrix uintptr, input uintptr, input_rows int32, output uintptr, output_row int32, output_rows int32, frame_size int32) {
-	var col, i int32
-	var matrix_data uintptr
-	var tmp float32
-	_, _, _, _ = col, i, matrix_data, tmp
-	if !(input_rows <= (*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Fcols && output_rows <= (*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Frows) {
-		Opus_celt_fatal(tls, __ccgo_ts+2336, __ccgo_ts+2312, int32(98))
+func Opus_mapping_matrix_multiply_channel_in_float(tls *libc.TLS, matrix *OpusT_MappingMatrix, input *float32, input_rows int32, output *OpusT_opus_res, output_row, output_rows, frame_size int32) {
+	if !(input_rows <= matrix.Fcols && output_rows <= matrix.Frows) {
+		Opus_celt_fatal(tls, __ccgo_ts+2336, __ccgo_ts+2312, 98)
 	}
-	matrix_data = Opus_mapping_matrix_get_data(tls, matrix)
-	i = 0
-	for {
-		if !(i < frame_size) {
-			break
+	if frame_size <= 0 {
+		return
+	}
+	data := unsafe.Slice(Opus_mapping_matrix_get_data(tls, matrix), matrix.Frows*matrix.Fcols)
+	src := unsafe.Slice(input, frame_size*input_rows)
+	dst := unsafe.Slice(output, (frame_size-1)*output_rows+1)
+	for i := int32(0); i < frame_size; i++ {
+		tmp := float32(0)
+		for col := int32(0); col < input_rows; col++ {
+			tmp += float32(float32(data[matrix.Frows*col+output_row]) * src[input_rows*i+col])
 		}
-		tmp = float32(0)
-		col = 0
-		for {
-			if !(col < input_rows) {
-				break
-			}
-			tmp = tmp + float32(float32(*(*OpusT_opus_int16)(unsafe.Pointer(matrix_data + uintptr((*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Frows*col+output_row)*2)))**(*float32)(unsafe.Pointer(input + uintptr(input_rows*i+col)*4)))
-			col = col + 1
-		}
-		*(*OpusT_opus_res)(unsafe.Pointer(output + uintptr(output_rows*i)*4)) = float32(float32(1) / float32(32768) * tmp)
-		i = i + 1
+		// Store only after reading this frame, preserving overlapping-buffer behavior.
+		dst[output_rows*i] = float32(float32(1.0/32768) * tmp)
 	}
 }
 
@@ -5240,31 +5159,23 @@ func Opus_mapping_matrix_multiply_channel_out_float(tls *libc.TLS, matrix *OpusT
 	}
 }
 
-func Opus_mapping_matrix_multiply_channel_in_short(tls *libc.TLS, matrix uintptr, input uintptr, input_rows int32, output uintptr, output_row int32, output_rows int32, frame_size int32) {
-	var col, i int32
-	var matrix_data uintptr
-	var tmp OpusT_opus_val32
-	_, _, _, _ = col, i, matrix_data, tmp
-	if !(input_rows <= (*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Fcols && output_rows <= (*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Frows) {
-		Opus_celt_fatal(tls, __ccgo_ts+2336, __ccgo_ts+2312, int32(161))
+func Opus_mapping_matrix_multiply_channel_in_short(tls *libc.TLS, matrix *OpusT_MappingMatrix, input *int16, input_rows int32, output *OpusT_opus_res, output_row, output_rows, frame_size int32) {
+	if !(input_rows <= matrix.Fcols && output_rows <= matrix.Frows) {
+		Opus_celt_fatal(tls, __ccgo_ts+2336, __ccgo_ts+2312, 161)
 	}
-	matrix_data = Opus_mapping_matrix_get_data(tls, matrix)
-	i = 0
-	for {
-		if !(i < frame_size) {
-			break
+	if frame_size <= 0 {
+		return
+	}
+	data := unsafe.Slice(Opus_mapping_matrix_get_data(tls, matrix), matrix.Frows*matrix.Fcols)
+	src := unsafe.Slice(input, frame_size*input_rows)
+	dst := unsafe.Slice(output, (frame_size-1)*output_rows+1)
+	for i := int32(0); i < frame_size; i++ {
+		tmp := float32(0)
+		for col := int32(0); col < input_rows; col++ {
+			// C promotes both int16 operands to int before converting the product.
+			tmp += float32(int32(data[matrix.Frows*col+output_row]) * int32(src[input_rows*i+col]))
 		}
-		tmp = float32(0)
-		col = 0
-		for {
-			if !(col < input_rows) {
-				break
-			}
-			tmp = tmp + OpusT_opus_val32(int32(*(*OpusT_opus_int16)(unsafe.Pointer(matrix_data + uintptr((*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Frows*col+output_row)*2)))*int32(*(*OpusT_opus_int16)(unsafe.Pointer(input + uintptr(input_rows*i+col)*2))))
-			col = col + 1
-		}
-		*(*OpusT_opus_res)(unsafe.Pointer(output + uintptr(output_rows*i)*4)) = OpusT_opus_res(float32(1) / float32(float32(32768)*float32(32768)) * tmp)
-		i = i + 1
+		dst[output_rows*i] = float32(float32(1.0/(32768*32768)) * tmp)
 	}
 }
 
@@ -5296,31 +5207,24 @@ func Opus_mapping_matrix_multiply_channel_out_short(tls *libc.TLS, matrix *OpusT
 	}
 }
 
-func Opus_mapping_matrix_multiply_channel_in_int24(tls *libc.TLS, matrix uintptr, input uintptr, input_rows int32, output uintptr, output_row int32, output_rows int32, frame_size int32) {
-	var col, i int32
-	var matrix_data uintptr
-	var tmp OpusT_opus_val64
-	_, _, _, _ = col, i, matrix_data, tmp
-	if !(input_rows <= (*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Fcols && output_rows <= (*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Frows) {
-		Opus_celt_fatal(tls, __ccgo_ts+2336, __ccgo_ts+2312, int32(236))
+func Opus_mapping_matrix_multiply_channel_in_int24(tls *libc.TLS, matrix *OpusT_MappingMatrix, input *int32, input_rows int32, output *OpusT_opus_res, output_row, output_rows, frame_size int32) {
+	if !(input_rows <= matrix.Fcols && output_rows <= matrix.Frows) {
+		Opus_celt_fatal(tls, __ccgo_ts+2336, __ccgo_ts+2312, 236)
 	}
-	matrix_data = Opus_mapping_matrix_get_data(tls, matrix)
-	i = 0
-	for {
-		if !(i < frame_size) {
-			break
+	if frame_size <= 0 {
+		return
+	}
+	data := unsafe.Slice(Opus_mapping_matrix_get_data(tls, matrix), matrix.Frows*matrix.Fcols)
+	src := unsafe.Slice(input, frame_size*input_rows)
+	dst := unsafe.Slice(output, (frame_size-1)*output_rows+1)
+	for i := int32(0); i < frame_size; i++ {
+		// opus_val64 is float32 in this build, not a widened accumulator.
+		tmp := float32(0)
+		for col := int32(0); col < input_rows; col++ {
+			tmp += float32(float32(data[matrix.Frows*col+output_row]) * float32(src[input_rows*i+col]))
 		}
-		tmp = float32(0)
-		col = 0
-		for {
-			if !(col < input_rows) {
-				break
-			}
-			tmp = tmp + OpusT_opus_val64(float32(*(*OpusT_opus_int16)(unsafe.Pointer(matrix_data + uintptr((*OpusT_MappingMatrix)(unsafe.Pointer(matrix)).Frows*col+output_row)*2)))*float32(*(*OpusT_opus_int32)(unsafe.Pointer(input + uintptr(input_rows*i+col)*4))))
-			col = col + 1
-		}
-		*(*OpusT_opus_res)(unsafe.Pointer(output + uintptr(output_rows*i)*4)) = float32(float32(1) / float32(32768) / float32(256) * float32(float32(1)/float32(32768)*tmp))
-		i = i + 1
+		// Preserve the two rounded scales in INT24TORES((1/32768.f)*tmp).
+		dst[output_rows*i] = float32(float32(1.0/32768/256) * float32(float32(1.0/32768)*tmp))
 	}
 }
 

@@ -72,9 +72,9 @@ func TestArchSilkDecoderLayout(t *testing.T) {
 	for i := range storage.guard {
 		storage.guard[i] = 0xa5
 	}
-	for _, init := range []func(*libc.TLS, uintptr) int32{Opus_silk_InitDecoder, Opus_silk_ResetDecoder} {
+	for _, init := range []func(*libc.TLS, *OpusT_silk_decoder) int32{Opus_silk_InitDecoder, Opus_silk_ResetDecoder} {
 		storage.decoder.FsStereo.Fpred_prev_Q13 = [2]int16{123, 456}
-		if ret := init(tls, uintptr(unsafe.Pointer(&storage.decoder))); ret != 0 {
+		if ret := init(tls, &storage.decoder); ret != 0 {
 			t.Fatalf("init/reset = %d", ret)
 		}
 		for i, ch := range storage.decoder.Fchannel_state {
@@ -97,7 +97,7 @@ func TestArchSilkDecoderLayout(t *testing.T) {
 		t.Fatalf("set_fs = %d", ret)
 	}
 	var want OpusT_silk_resampler_state_struct
-	if ret := Opus_silk_resampler_init(tls, uintptr(unsafe.Pointer(&want)), 16000, 48000, 0); ret != 0 {
+	if ret := Opus_silk_resampler_init(tls, &want, 16000, 48000, 0); ret != 0 {
 		t.Fatalf("resampler init = %d", ret)
 	}
 	if ch.Fresampler_state != want {
