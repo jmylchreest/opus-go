@@ -1001,7 +1001,7 @@ func Opus_ec_laplace_encode(tls *libc.TLS, enc uintptr, value uintptr, fs uint32
 			Opus_celt_fatal(tls, __ccgo_ts+5649, __ccgo_ts+5631, int32(89))
 		}
 	}
-	Opus_ec_encode_bin(tls, enc, fl, fl+fs, uint32(15))
+	Opus_ec_encode_bin(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), fl, fl+fs, uint32(15))
 }
 
 func Opus_ec_laplace_decode(tls *libc.TLS, dec *OpusT_ec_dec, fs uint32, decay int32) (r int32) {
@@ -1080,7 +1080,7 @@ func Opus_ec_laplace_encode_p0(tls *libc.TLS, enc uintptr, value int32, p0 OpusT
 		v1 = v2
 	}
 	s = v1
-	Opus_ec_enc_icdf16(tls, enc, s, uintptr(unsafe.Pointer(&sign_icdf[0])), uint32(15))
+	Opus_ec_enc_icdf16(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), s, &sign_icdf[0], uint32(15))
 	value = libc.Xabs(tls, value)
 	if value != 0 {
 		if int32(7) > int32(decay) {
@@ -1110,7 +1110,7 @@ func Opus_ec_laplace_encode_p0(tls *libc.TLS, enc uintptr, value int32, p0 OpusT
 			} else {
 				v1 = int32(7)
 			}
-			Opus_ec_enc_icdf16(tls, enc, v1, uintptr(unsafe.Pointer(&icdf[0])), uint32(15))
+			Opus_ec_enc_icdf16(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), v1, &icdf[0], uint32(15))
 			value = value - int32(7)
 		}
 	}

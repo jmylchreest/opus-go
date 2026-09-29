@@ -214,6 +214,38 @@ Int16 matrix input comparisons additionally cover extreme integer products and
 Int24 matrix input tests include 24-bit limits, float32 integer-rounding boundaries,
 and full int32 values; comparisons retain the float32 accumulator and two scaling
 steps, with no added 24-bit clipping.
+Decoder sample-count forwarding compares actual native decoder queries at all
+supported rates, TOC values and representative counts/errors without changing state.
+Shared entropy encoder initialization compares all numeric fields with C from
+random preloaded states, verifies untouched buffers, and tests sole-context buffer
+ownership across GC and stack growth. The separate `opusccenc` copy is unchanged.
+Entropy shrinking exhausts valid new sizes, tail counts, and boundary front
+counts for buffers through 32 bytes, comparing overlapping moves and all state
+fields with C while checking outside guards.
+Initial entropy-bit patching compares all 0–8 bit widths and byte values across
+finalized/pending-byte, interval, and error branches, including threshold-adjacent
+ranges and signed pending state, with exact state and buffer comparisons.
+Carry propagation compares the actual static `entenc.c` helper across buffered
+bytes, pending carry runs and exhausted buffers; Go tests also cover counter wrap.
+Encoder normalization compares the actual static C helper around range thresholds,
+multiple normalization passes, carry-producing values and exhausted buffers.
+Interval encoding compares complete state and output after each of 400 consecutive
+intervals at representative totals, including zero lower bounds, full upper bounds,
+normalization and buffer exhaustion.
+Binary interval encoding similarly checks 500 consecutive operations with 0/1/2/4/8/15
+bit totals, exact numeric state, emitted bytes and guards, including zero-width
+identity intervals and output exhaustion.
+Probability-coded encoder bits compare 500 consecutive operations at logp
+1/2/3/8/15, including arbitrary nonzero signed values and buffer exhaustion.
+16-bit ICDF encoder tests compare every symbol in representative 8/15/16-bit
+tables, singleton tables and consecutive coding with exhausted buffers, checking
+all numeric fields, output and unchanged tables.
+Raw encoder tail bits compare every 0–32-bit preloaded window occupancy and
+1–25-bit append width, byte flushing, guards and exhausted output. Go tests check
+bit-accounting wrap and consecutive appends.
+Finalization compares interval termination, pending carries, 0–32 buffered tail
+bits, padding and partial-byte front/tail collisions against C, including guards
+and exhausted output. A focused Go test round-trips typed range and raw-bit coding.
 Float-to-PCM conversion, VAD initialization,
 Laroia weights, sum-of-squares, bandwidth expansion (16/32-bit), 2:1 downsampling,
 analysis filter bank, high-quality 2× upsampling, mono/stereo biquads, low-pass

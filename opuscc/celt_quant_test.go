@@ -8,7 +8,7 @@ import (
 func TestQuantBandN1FieldAccesses(t *testing.T) {
 	buffer := make([]byte, 16)
 	var encoder OpusT_ec_enc
-	Opus_ec_enc_init(nil, uintptr(unsafe.Pointer(&encoder)), entropyBufferPointer(buffer), uint32(len(buffer)))
+	Opus_ec_enc_init(nil, &encoder, unsafe.SliceData(buffer), uint32(len(buffer)))
 
 	context := band_ctx{
 		Fencode:         1,
@@ -23,7 +23,7 @@ func TestQuantBandN1FieldAccesses(t *testing.T) {
 	if got, want := quant_band_n1(nil, uintptr(unsafe.Pointer(&context)), uintptr(unsafe.Pointer(&x)), uintptr(unsafe.Pointer(&y)), uintptr(unsafe.Pointer(&lowband))), uint32(1); got != want {
 		t.Fatalf("coded dimensions: got %d, want %d", got, want)
 	}
-	Opus_ec_enc_done(nil, uintptr(unsafe.Pointer(&encoder)))
+	Opus_ec_enc_done(nil, &encoder)
 
 	if got, want := x, OpusT_celt_norm(-1); got != want {
 		t.Fatalf("resynthesized X: got %v, want %v", got, want)

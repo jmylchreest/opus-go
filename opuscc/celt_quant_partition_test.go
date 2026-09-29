@@ -47,7 +47,7 @@ func TestQuantPartitionLocalSplitState(t *testing.T) {
 	mode.FlogN = uintptr(unsafe.Pointer(&logN[0]))
 	buffer := make([]byte, 16)
 	var encoder OpusT_ec_enc
-	Opus_ec_enc_init(tls, uintptr(unsafe.Pointer(&encoder)), entropyBufferPointer(buffer), uint32(len(buffer)))
+	Opus_ec_enc_init(tls, &encoder, unsafe.SliceData(buffer), uint32(len(buffer)))
 	context := band_ctx{
 		Fm:              uintptr(unsafe.Pointer(&mode)),
 		Fencode:         1,
@@ -59,7 +59,7 @@ func TestQuantPartitionLocalSplitState(t *testing.T) {
 	x := [4]OpusT_celt_norm{0.2, -0.4, 0.6, -0.8}
 
 	mask := quant_partition(tls, &context, uintptr(unsafe.Pointer(&x[0])), 4, 30, 1, 0, 0, 1, 3)
-	Opus_ec_enc_done(tls, uintptr(unsafe.Pointer(&encoder)))
+	Opus_ec_enc_done(tls, &encoder)
 
 	if got, want := mask, uint32(1); got != want {
 		t.Fatalf("collapse mask: got %d, want %d", got, want)

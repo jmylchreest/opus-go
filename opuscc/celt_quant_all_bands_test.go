@@ -91,7 +91,7 @@ func TestQuantAllBandsCReference(t *testing.T) {
 		seed := xmallocArray[uint32](tls, 1)
 		seed[0] = seedIn
 
-		Opus_ec_enc_init(tls, uintptr(unsafe.Pointer(&encoder[0])), uintptr(unsafe.Pointer(&buffer[0])), 64)
+		Opus_ec_enc_init(tls, &encoder[0], &buffer[0], 64)
 		var yPtr uintptr
 		if stereo {
 			yPtr = uintptr(unsafe.Pointer(&Y[0]))
@@ -102,7 +102,7 @@ func TestQuantAllBandsCReference(t *testing.T) {
 			0, spread, dual, 3, uintptr(unsafe.Pointer(&tfRes[0])),
 			400, 24, uintptr(unsafe.Pointer(&encoder[0])), 0, 3,
 			uintptr(unsafe.Pointer(&seed[0])), complexity, 0, 0)
-		Opus_ec_enc_done(tls, uintptr(unsafe.Pointer(&encoder[0])))
+		Opus_ec_enc_done(tls, &encoder[0])
 
 		nmasks := 3
 		if stereo {

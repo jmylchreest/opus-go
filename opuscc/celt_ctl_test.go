@@ -32,7 +32,7 @@ func TestQuantCoarseEnergyLocalQI(t *testing.T) {
 	errors := [6]OpusT_celt_glog{}
 	buffer := make([]byte, 32)
 	var encoder OpusT_ec_enc
-	Opus_ec_enc_init(tls, uintptr(unsafe.Pointer(&encoder)), entropyBufferPointer(buffer), uint32(len(buffer)))
+	Opus_ec_enc_init(tls, &encoder, unsafe.SliceData(buffer), uint32(len(buffer)))
 
 	badness := quant_coarse_energy_impl(
 		tls,
@@ -52,7 +52,7 @@ func TestQuantCoarseEnergyLocalQI(t *testing.T) {
 		16,
 		0,
 	)
-	Opus_ec_enc_done(tls, uintptr(unsafe.Pointer(&encoder)))
+	Opus_ec_enc_done(tls, &encoder)
 
 	if got, want := badness, int32(0); got != want {
 		t.Fatalf("badness: got %d, want %d", got, want)
@@ -201,14 +201,14 @@ func TestQuantCoarseEnergyWrapperCReference(t *testing.T) {
 		eBands, oldEBands, errors := s.eBands, s.oldEBands, [6]OpusT_celt_glog{}
 		buffer := make([]byte, 32)
 		var encoder OpusT_ec_enc
-		Opus_ec_enc_init(tls, uintptr(unsafe.Pointer(&encoder)), entropyBufferPointer(buffer), 32)
+		Opus_ec_enc_init(tls, &encoder, unsafe.SliceData(buffer), 32)
 		delayedIntra := s.delayedIntra
 		Opus_quant_coarse_energy(tls, uintptr(unsafe.Pointer(&mode)), 0, 3, 3,
 			uintptr(unsafe.Pointer(&eBands[0])), uintptr(unsafe.Pointer(&oldEBands[0])),
 			s.budget, uintptr(unsafe.Pointer(&errors[0])), uintptr(unsafe.Pointer(&encoder)),
 			2, s.LM, s.nbAvailable, s.forceIntra, uintptr(unsafe.Pointer(&delayedIntra)),
 			s.twoPass, s.lossRate, s.lfe)
-		Opus_ec_enc_done(tls, uintptr(unsafe.Pointer(&encoder)))
+		Opus_ec_enc_done(tls, &encoder)
 
 		if got := oldEBands; got != s.wantOldEBands {
 			t.Errorf("%s: oldEBands: got %v, want %v", s.name, got, s.wantOldEBands)

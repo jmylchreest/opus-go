@@ -1204,112 +1204,86 @@ func ec_write_byte_at_end(tls *libc.TLS, _this0 *OpusT_ec_enc, _value uint32) (r
 //	   32-bit systems.
 //	  The alternative is to truncate the range in order to force a carry, but
 //	   requires similar carry tracking in the decoder, needlessly slowing it down.*/
-func ec_enc_carry_out(tls *libc.TLS, _this uintptr, _c int32) {
-	var carry int32
-	var sym uint32
-	var v1 OpusT_opus_uint32
-	_, _, _ = carry, sym, v1
-	if uint32(_c) != uint32(1)<<int32(EC_SYM_BITS)-uint32(1) {
-		carry = _c >> int32(EC_SYM_BITS)
-		/*Don't output a byte on the first write.
-		  This compare should be taken care of by branch-prediction thereafter.*/
-		if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem >= 0 {
-			(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), uint32((*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem+carry))
-		}
-		if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext > uint32(0) {
-			sym = (uint32(1)<<int32(EC_SYM_BITS) - uint32(1) + uint32(carry)) & (uint32(1)<<int32(EC_SYM_BITS) - uint32(1))
-			for {
-				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), sym)
-				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext--
-				v1 = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext
-				if !(v1 > uint32(0)) {
-					break
-				}
-			}
-		}
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem = int32(uint32(_c) & (uint32(1)<<int32(EC_SYM_BITS) - uint32(1)))
+func ec_enc_carry_out(tls *libc.TLS, enc *OpusT_ec_enc, c int32) {
+	const symMax = uint32(1)<<EC_SYM_BITS - 1
+	if uint32(c) == symMax {
+		enc.Fext++
+		return
+	}
+	carry := c >> EC_SYM_BITS
+	// The first write buffers a byte instead of emitting it.
+	if enc.Frem >= 0 {
+		enc.Ferror1 |= ec_write_byte(tls, enc, uint32(enc.Frem+carry))
+	}
+	sym := (symMax + uint32(carry)) & symMax
+	for enc.Fext > 0 {
+		enc.Ferror1 |= ec_write_byte(tls, enc, sym)
+		enc.Fext--
+	}
+	enc.Frem = int32(uint32(c) & symMax)
+}
+
+func ec_enc_normalize(tls *libc.TLS, enc *OpusT_ec_enc) {
+	for enc.Frng <= uint32(1)<<(EC_CODE_BITS-1)>>EC_SYM_BITS {
+		ec_enc_carry_out(tls, enc, int32(enc.Fval>>(EC_CODE_BITS-EC_SYM_BITS-1)))
+		enc.Fval = enc.Fval << EC_SYM_BITS & (uint32(1)<<(EC_CODE_BITS-1) - 1)
+		enc.Frng <<= EC_SYM_BITS
+		enc.Fnbits_total += EC_SYM_BITS
+	}
+}
+
+func Opus_ec_enc_init(tls *libc.TLS, enc *OpusT_ec_enc, buf *byte, size OpusT_opus_uint32) {
+	enc.Fbuf = buf
+	enc.Fend_offs = 0
+	enc.Fend_window = 0
+	enc.Fnend_bits = 0
+	// The offset from which ec_tell subtracts partial bits.
+	enc.Fnbits_total = EC_CODE_BITS + 1
+	enc.Foffs = 0
+	enc.Frng = uint32(1) << (EC_CODE_BITS - 1)
+	enc.Frem = -1
+	enc.Fval = 0
+	enc.Fext = 0
+	enc.Fstorage = size
+	enc.Ferror1 = 0
+}
+
+func Opus_ec_encode(tls *libc.TLS, enc *OpusT_ec_enc, fl, fh, ft uint32) {
+	r := enc.Frng / ft
+	if fl > 0 {
+		enc.Fval += enc.Frng - r*(ft-fl)
+		enc.Frng = r * (fh - fl)
 	} else {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext + 1
+		enc.Frng -= r * (ft - fh)
 	}
+	ec_enc_normalize(tls, enc)
 }
 
-func ec_enc_normalize(tls *libc.TLS, _this uintptr) {
-	/*If the range is too small, output some bits and rescale it.*/
-	for (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng <= uint32(1)<<(int32(EC_CODE_BITS)-int32(1))>>int32(EC_SYM_BITS) {
-		ec_enc_carry_out(tls, _this, int32((*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval>>(int32(EC_CODE_BITS)-int32(EC_SYM_BITS)-int32(1))))
-		/*Move the next-to-high-order symbol into the high-order position.*/
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval << int32(EC_SYM_BITS) & (uint32(1)<<(int32(EC_CODE_BITS)-int32(1)) - uint32(1))
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng <<= uint32(int32(EC_SYM_BITS))
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnbits_total += int32(EC_SYM_BITS)
-	}
-}
-
-func Opus_ec_enc_init(tls *libc.TLS, _this uintptr, _buf uintptr, _size OpusT_opus_uint32) {
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fbuf = (*byte)(unsafe.Pointer(_buf))
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_offs = uint32(0)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_window = uint32(0)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnend_bits = 0
-	/*This is the offset from which ec_tell() will subtract partial bits.*/
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnbits_total = int32(EC_CODE_BITS) + int32(1)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Foffs = uint32(0)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng = uint32(1) << (int32(EC_CODE_BITS) - int32(1))
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem = -int32(1)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval = uint32(0)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext = uint32(0)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fstorage = _size
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 = 0
-}
-
-func Opus_ec_encode(tls *libc.TLS, _this uintptr, _fl uint32, _fh uint32, _ft uint32) {
-	var r, v1, v2 OpusT_opus_uint32
-	_, _, _ = r, v1, v2
-	v1 = _ft
-	_ = v1 > uint32(0)
-	v2 = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng / v1
-	r = v2
-	if _fl > uint32(0) {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval += (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng - r*(_ft-_fl)
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng = r * (_fh - _fl)
+func Opus_ec_encode_bin(tls *libc.TLS, enc *OpusT_ec_enc, fl, fh, bits uint32) {
+	r := enc.Frng >> bits
+	if fl > 0 {
+		enc.Fval += enc.Frng - r*(uint32(1)<<bits-fl)
+		enc.Frng = r * (fh - fl)
 	} else {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng -= r * (_ft - _fh)
+		enc.Frng -= r * (uint32(1)<<bits - fh)
 	}
-	ec_enc_normalize(tls, _this)
-}
-
-func Opus_ec_encode_bin(tls *libc.TLS, _this uintptr, _fl uint32, _fh uint32, _bits uint32) {
-	var r OpusT_opus_uint32
-	_ = r
-	r = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng >> _bits
-	if _fl > uint32(0) {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval += (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng - r*(uint32(1)<<_bits-_fl)
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng = r * (_fh - _fl)
-	} else {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng -= r * (uint32(1)<<_bits - _fh)
-	}
-	ec_enc_normalize(tls, _this)
+	ec_enc_normalize(tls, enc)
 }
 
 // C documentation
 //
 //	/*The probability of having a "one" is 1/(1<<_logp).*/
-func Opus_ec_enc_bit_logp(tls *libc.TLS, _this uintptr, _val int32, _logp uint32) {
-	var l, r, s OpusT_opus_uint32
-	var v1 uint32
-	_, _, _, _ = l, r, s, v1
-	r = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng
-	l = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval
-	s = r >> _logp
-	r = r - s
-	if _val != 0 {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval = l + r
-	}
-	if _val != 0 {
-		v1 = s
+func Opus_ec_enc_bit_logp(tls *libc.TLS, enc *OpusT_ec_enc, value int32, logp uint32) {
+	r := enc.Frng
+	s := r >> logp
+	r -= s
+	if value != 0 {
+		enc.Fval += r
+		enc.Frng = s
 	} else {
-		v1 = r
+		enc.Frng = r
 	}
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng = v1
-	ec_enc_normalize(tls, _this)
+	ec_enc_normalize(tls, enc)
 }
 
 func Opus_ec_enc_icdf(tls *libc.TLS, _this uintptr, _s int32, _icdf uintptr, _ftb uint32) {
@@ -1322,20 +1296,21 @@ func Opus_ec_enc_icdf(tls *libc.TLS, _this uintptr, _s int32, _icdf uintptr, _ft
 	} else {
 		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng -= r * uint32(*(*uint8)(unsafe.Pointer(_icdf + uintptr(_s))))
 	}
-	ec_enc_normalize(tls, _this)
+	ec_enc_normalize(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)))
 }
 
-func Opus_ec_enc_icdf16(tls *libc.TLS, _this uintptr, _s int32, _icdf uintptr, _ftb uint32) {
-	var r OpusT_opus_uint32
-	_ = r
-	r = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng >> _ftb
-	if _s > 0 {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval += (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng - r*uint32(*(*OpusT_opus_uint16)(unsafe.Pointer(_icdf + uintptr(_s-int32(1))*2)))
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng = r * uint32(int32(*(*OpusT_opus_uint16)(unsafe.Pointer(_icdf + uintptr(_s-int32(1))*2)))-int32(*(*OpusT_opus_uint16)(unsafe.Pointer(_icdf + uintptr(_s)*2))))
+func Opus_ec_enc_icdf16(tls *libc.TLS, enc *OpusT_ec_enc, symbol int32, icdf *uint16, ftb uint32) {
+	r := enc.Frng >> ftb
+	// Only the current and previous entries are required; no fabricated table extent.
+	current := uint32(*(*uint16)(unsafe.Add(unsafe.Pointer(icdf), uintptr(symbol)*2)))
+	if symbol > 0 {
+		previous := uint32(*(*uint16)(unsafe.Add(unsafe.Pointer(icdf), uintptr(symbol-1)*2)))
+		enc.Fval += enc.Frng - r*previous
+		enc.Frng = r * (previous - current)
 	} else {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng -= r * uint32(*(*OpusT_opus_uint16)(unsafe.Pointer(_icdf + uintptr(_s)*2)))
+		enc.Frng -= r * current
 	}
-	ec_enc_normalize(tls, _this)
+	ec_enc_normalize(tls, enc)
 }
 
 func Opus_ec_enc_uint(tls *libc.TLS, _this uintptr, _fl OpusT_opus_uint32, _ft OpusT_opus_uint32) {
@@ -1352,131 +1327,114 @@ func Opus_ec_enc_uint(tls *libc.TLS, _this uintptr, _fl OpusT_opus_uint32, _ft O
 		ftb = ftb - int32(EC_UINT_BITS)
 		ft = _ft>>ftb + uint32(1)
 		fl = _fl >> ftb
-		Opus_ec_encode(tls, _this, fl, fl+uint32(1), ft)
-		Opus_ec_enc_bits(tls, _this, _fl&(uint32(1)<<ftb-uint32(1)), uint32(ftb))
+		Opus_ec_encode(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), fl, fl+uint32(1), ft)
+		Opus_ec_enc_bits(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), _fl&(uint32(1)<<ftb-uint32(1)), uint32(ftb))
 	} else {
-		Opus_ec_encode(tls, _this, _fl, _fl+uint32(1), _ft+uint32(1))
+		Opus_ec_encode(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), _fl, _fl+uint32(1), _ft+uint32(1))
 	}
 }
 
-func Opus_ec_enc_bits(tls *libc.TLS, _this uintptr, _fl OpusT_opus_uint32, _bits uint32) {
-	var used int32
-	var window OpusT_ec_window
-	_, _ = used, window
-	window = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_window
-	used = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnend_bits
-	if !(_bits > uint32(0)) {
-		Opus_celt_fatal(tls, __ccgo_ts+4716, __ccgo_ts+4699, int32(209))
+func Opus_ec_enc_bits(tls *libc.TLS, enc *OpusT_ec_enc, value OpusT_opus_uint32, bits uint32) {
+	window, used := enc.Fend_window, enc.Fnend_bits
+	if bits == 0 {
+		Opus_celt_fatal(tls, __ccgo_ts+4716, __ccgo_ts+4699, 209)
 	}
-	if uint32(used)+_bits > uint32(int32(4)*int32(CHAR_BIT)) {
-		for cond := true; cond; cond = used >= int32(EC_SYM_BITS) {
-			(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte_at_end(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), window&(uint32(1)<<int32(EC_SYM_BITS)-uint32(1)))
-			window = window >> uint32(int32(EC_SYM_BITS))
-			used = used - int32(EC_SYM_BITS)
-		}
-	}
-	window = window | _fl<<used
-	used = int32(uint32(used) + _bits)
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_window = window
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnend_bits = used
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnbits_total = int32(uint32((*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnbits_total) + _bits)
-}
-
-func Opus_ec_enc_patch_initial_bits(tls *libc.TLS, _this uintptr, _val uint32, _nbits uint32) {
-	var mask uint32
-	var shift int32
-	_, _ = mask, shift
-	if !(_nbits <= uint32(int32(EC_SYM_BITS))) {
-		Opus_celt_fatal(tls, __ccgo_ts+4742, __ccgo_ts+4699, int32(228))
-	}
-	shift = int32(uint32(int32(EC_SYM_BITS)) - _nbits)
-	mask = uint32((int32(1)<<_nbits - int32(1)) << shift)
-	if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Foffs > uint32(0) {
-		/*The first byte has been finalized.*/
-		*(*uint8)(unsafe.Pointer((*OpusT_ec_enc)(unsafe.Pointer(_this)).Fbuf)) = uint8(uint32(*(*uint8)(unsafe.Pointer((*OpusT_ec_enc)(unsafe.Pointer(_this)).Fbuf))) & ^mask | _val<<shift)
-	} else {
-		if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem >= 0 {
-			/*The first byte is still awaiting carry propagation.*/
-			(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem = int32(uint32((*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem) & ^mask | _val<<shift)
-		} else {
-			if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng <= uint32(1)<<(int32(EC_CODE_BITS)-int32(1))>>_nbits {
-				/*The renormalization loop has never been run.*/
-				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval & ^(mask<<(int32(EC_CODE_BITS)-int32(EC_SYM_BITS)-int32(1))) | _val<<(int32(EC_CODE_BITS)-int32(EC_SYM_BITS)-int32(1)+shift)
-			} else {
-				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 = -int32(1)
+	if uint32(used)+bits > 32 {
+		// Flush at least one byte, then continue through complete bytes.
+		for {
+			enc.Ferror1 |= ec_write_byte_at_end(tls, enc, window&255)
+			window >>= EC_SYM_BITS
+			used -= EC_SYM_BITS
+			if used < EC_SYM_BITS {
+				break
 			}
 		}
 	}
+	window |= value << used
+	enc.Fend_window = window
+	enc.Fnend_bits = int32(uint32(used) + bits)
+	enc.Fnbits_total = int32(uint32(enc.Fnbits_total) + bits)
 }
 
-func Opus_ec_enc_shrink(tls *libc.TLS, _this uintptr, _size OpusT_opus_uint32) {
-	if !((*OpusT_ec_enc)(unsafe.Pointer(_this)).Foffs+(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_offs <= _size) {
-		Opus_celt_fatal(tls, __ccgo_ts+4780, __ccgo_ts+4699, int32(249))
+func Opus_ec_enc_patch_initial_bits(tls *libc.TLS, enc *OpusT_ec_enc, value, nbits uint32) {
+	if nbits > EC_SYM_BITS {
+		Opus_celt_fatal(tls, __ccgo_ts+4742, __ccgo_ts+4699, 228)
 	}
-	enc := (*OpusT_ec_enc)(unsafe.Pointer(_this))
+	shift := uint32(EC_SYM_BITS) - nbits
+	mask := ((uint32(1) << nbits) - 1) << shift
+	const codeShift = EC_CODE_BITS - EC_SYM_BITS - 1
+	switch {
+	case enc.Foffs > 0:
+		// Finalized byte: retain uint8 narrowing, even for oversized value.
+		*enc.Fbuf = byte(uint32(*enc.Fbuf)&^mask | value<<shift)
+	case enc.Frem >= 0:
+		// Pending byte awaiting carry propagation.
+		enc.Frem = int32(uint32(enc.Frem)&^mask | value<<shift)
+	case enc.Frng <= uint32(1)<<(EC_CODE_BITS-1)>>nbits:
+		// No normalization yet; patch the coding interval.
+		enc.Fval = enc.Fval&^(mask<<codeShift) | value<<(codeShift+shift)
+	default:
+		enc.Ferror1 = -1
+	}
+}
+
+func Opus_ec_enc_shrink(tls *libc.TLS, enc *OpusT_ec_enc, size OpusT_opus_uint32) {
+	if !(enc.Foffs+enc.Fend_offs <= size) {
+		Opus_celt_fatal(tls, __ccgo_ts+4780, __ccgo_ts+4699, 249)
+	}
 	if enc.Fend_offs > 0 {
 		buf := unsafe.Slice(enc.Fbuf, enc.Fstorage)
-		copy(buf[_size-enc.Fend_offs:_size], buf[enc.Fstorage-enc.Fend_offs:])
+		// OPUS_MOVE has memmove semantics, including overlapping tail bytes.
+		copy(buf[size-enc.Fend_offs:size], buf[enc.Fstorage-enc.Fend_offs:])
 	}
-	(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fstorage = _size
+	enc.Fstorage = size
 }
 
-func Opus_ec_enc_done(tls *libc.TLS, _this uintptr) {
-	var end, msk OpusT_opus_uint32
-	var l, used int32
-	var window OpusT_ec_window
-	var v1 *byte
-	_, _, _, _, _, _ = end, l, msk, used, window, v1
-	/*We output the minimum number of bits that ensures that the symbols encoded
-	  thus far will be decoded correctly regardless of the bits that follow.*/
-	l = int32(EC_CODE_BITS) - (int32(4)*int32(CHAR_BIT) - libc.X__builtin_clz(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng))
-	msk = (uint32(1)<<(int32(EC_CODE_BITS)-int32(1)) - uint32(1)) >> l
-	end = ((*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval + msk) & ^msk
-	if end|msk >= (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval+(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng {
-		l = l + 1
-		msk = msk >> uint32(1)
-		end = ((*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval + msk) & ^msk
+func Opus_ec_enc_done(tls *libc.TLS, enc *OpusT_ec_enc) {
+	// Minimum interval termination that decodes independently of following bits.
+	l := int32(EC_CODE_BITS - bits.Len32(enc.Frng))
+	mask := (uint32(1)<<(EC_CODE_BITS-1) - 1) >> l
+	end := (enc.Fval + mask) &^ mask
+	if end|mask >= enc.Fval+enc.Frng {
+		l++
+		mask >>= 1
+		end = (enc.Fval + mask) &^ mask
 	}
 	for l > 0 {
-		ec_enc_carry_out(tls, _this, int32(end>>(int32(EC_CODE_BITS)-int32(EC_SYM_BITS)-int32(1))))
-		end = end << int32(EC_SYM_BITS) & (uint32(1)<<(int32(EC_CODE_BITS)-int32(1)) - uint32(1))
-		l = l - int32(EC_SYM_BITS)
+		ec_enc_carry_out(tls, enc, int32(end>>(EC_CODE_BITS-EC_SYM_BITS-1)))
+		end = end << EC_SYM_BITS & (uint32(1)<<(EC_CODE_BITS-1) - 1)
+		l -= EC_SYM_BITS
 	}
-	/*If we have a buffered byte flush it into the output buffer.*/
-	if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frem >= 0 || (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fext > uint32(0) {
-		ec_enc_carry_out(tls, _this, 0)
+	if enc.Frem >= 0 || enc.Fext > 0 {
+		ec_enc_carry_out(tls, enc, 0)
 	}
-	/*If we have buffered extra bits, flush them as well.*/
-	window = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_window
-	used = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fnend_bits
-	for used >= int32(EC_SYM_BITS) {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 |= ec_write_byte_at_end(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), window&(uint32(1)<<int32(EC_SYM_BITS)-uint32(1)))
-		window = window >> uint32(int32(EC_SYM_BITS))
-		used = used - int32(EC_SYM_BITS)
+	window, used := enc.Fend_window, enc.Fnend_bits
+	for used >= EC_SYM_BITS {
+		enc.Ferror1 |= ec_write_byte_at_end(tls, enc, window&255)
+		window >>= EC_SYM_BITS
+		used -= EC_SYM_BITS
 	}
-	/*Clear any excess space and add any remaining extra bits to the last byte.*/
-	if !((*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 != 0) {
-		enc := (*OpusT_ec_enc)(unsafe.Pointer(_this))
-		if enc.Fbuf != nil {
-			clear(unsafe.Slice(enc.Fbuf, enc.Fstorage)[enc.Foffs : enc.Fstorage-enc.Fend_offs])
+	if enc.Ferror1 != 0 {
+		return
+	}
+	if enc.Fbuf != nil {
+		clear(unsafe.Slice(enc.Fbuf, enc.Fstorage)[enc.Foffs : enc.Fstorage-enc.Fend_offs])
+	}
+	if used > 0 {
+		if enc.Fend_offs >= enc.Fstorage {
+			enc.Ferror1 = -1
+			return
 		}
-		if used > 0 {
-			/*If there's no range coder data at all, give up.*/
-			if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_offs >= (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fstorage {
-				(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 = -int32(1)
-			} else {
-				l = -l
-				/*If we've busted, don't add too many extra bits to the last byte; it
-				  would corrupt the range coder data, and that's more important.*/
-				if (*OpusT_ec_enc)(unsafe.Pointer(_this)).Foffs+(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fend_offs >= (*OpusT_ec_enc)(unsafe.Pointer(_this)).Fstorage && l < used {
-					window = window & uint32(int32(1)<<l-int32(1))
-					(*OpusT_ec_enc)(unsafe.Pointer(_this)).Ferror1 = -int32(1)
-				}
-				v1 = (*byte)(unsafe.Add(unsafe.Pointer(enc.Fbuf), uintptr(enc.Fstorage-enc.Fend_offs-1)))
-				*v1 |= byte(window)
-			}
+		l = -l
+		// Preserve range-coded data when front and tail share the final byte.
+		if enc.Foffs+enc.Fend_offs >= enc.Fstorage && l < used {
+			window &= uint32(int32(1)<<l - 1)
+			enc.Ferror1 = -1
 		}
+		p := (*byte)(unsafe.Add(unsafe.Pointer(enc.Fbuf), uintptr(enc.Fstorage-enc.Fend_offs-1)))
+		*p |= byte(window)
 	}
+	// C intentionally leaves the original end_window/nend_bits fields unchanged.
 }
 
 var trim_icdf11 = [11]uint8{
@@ -1946,7 +1904,7 @@ func quant_coarse_energy_impl(tls *libc.TLS, m uintptr, start int32, end int32, 
 	badness = 0
 	prev = [2]OpusT_opus_val32{}
 	if tell+int32(3) <= budget {
-		Opus_ec_enc_bit_logp(tls, enc, intra, uint32(3))
+		Opus_ec_enc_bit_logp(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), intra, uint32(3))
 	}
 	if intra != 0 {
 		coef = float32(0)
@@ -2055,7 +2013,7 @@ func quant_coarse_energy_impl(tls *libc.TLS, m uintptr, start int32, end int32, 
 							v2 = qi
 						}
 						qi = v2
-						Opus_ec_enc_bit_logp(tls, enc, -qi, uint32(1))
+						Opus_ec_enc_bit_logp(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), -qi, uint32(1))
 					} else {
 						qi = -int32(1)
 					}
@@ -2414,7 +2372,7 @@ func Opus_quant_fine_energy(tls *libc.TLS, m uintptr, start int32, end int32, ol
 			if q2 < 0 {
 				q2 = 0
 			}
-			Opus_ec_enc_bits(tls, enc, uint32(q2), uint32(*(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4))))
+			Opus_ec_enc_bits(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), uint32(q2), uint32(*(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4))))
 			offset = float32(float32((float32(q2)+float32(0.5))*float32(int32(1)<<(int32(14)-*(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4)))))*(float32(1)/float32(16384))) - float32(0.5)
 			offset = offset * OpusT_celt_glog(float32(int32(1)<<(int32(14)-int32(prev)))*(float32(1)/float32(16384)))
 			*(*OpusT_celt_glog)(unsafe.Pointer(oldEBands + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) += offset
@@ -2457,7 +2415,7 @@ func Opus_quant_energy_finalise(tls *libc.TLS, m uintptr, start int32, end int32
 					v5 = int32(1)
 				}
 				q2 = v5
-				Opus_ec_enc_bits(tls, enc, uint32(q2), uint32(1))
+				Opus_ec_enc_bits(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), uint32(q2), uint32(1))
 				offset = OpusT_celt_glog(float32((float32(q2)-float32(0.5))*float32(int32(1)<<(int32(14)-*(*int32)(unsafe.Pointer(fine_quant + uintptr(i)*4))-int32(1)))) * (float32(1) / float32(16384)))
 				if oldEBands != uintptr(uint32(0)) {
 					*(*OpusT_celt_glog)(unsafe.Pointer(oldEBands + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) += offset
