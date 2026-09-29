@@ -704,7 +704,8 @@ func Opus_renormalise_vector(tls *libc.TLS, X *OpusT_celt_norm, N1 int32, gain O
 	}
 }
 
-func Opus_stereo_itheta(tls *libc.TLS, X uintptr, Y uintptr, stereo int32, N1 int32, arch int32) (r OpusT_opus_int32) {
+func Opus_stereo_itheta(tls *libc.TLS, X, Y *OpusT_celt_norm, stereo int32, N1 int32, arch int32) (r OpusT_opus_int32) {
+	x, y := unsafe.Slice(X, int(N1)), unsafe.Slice(Y, int(N1))
 	var Emid, Eside, mid, side, xy, v1 OpusT_opus_val32
 	var i, i1, itheta int32
 	var m, s OpusT_celt_norm
@@ -719,8 +720,8 @@ func Opus_stereo_itheta(tls *libc.TLS, X uintptr, Y uintptr, stereo int32, N1 in
 			if !(i1 < N1) {
 				break
 			}
-			m = *(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(i1)*4)) + *(*OpusT_celt_norm)(unsafe.Pointer(Y + uintptr(i1)*4))
-			s = *(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(i1)*4)) - *(*OpusT_celt_norm)(unsafe.Pointer(Y + uintptr(i1)*4))
+			m = x[i1] + y[i1]
+			s = x[i1] - y[i1]
 			Emid = Emid + OpusT_opus_val32(m*m)
 			Eside = Eside + OpusT_opus_val32(s*s)
 			i1 = i1 + 1
@@ -733,7 +734,7 @@ func Opus_stereo_itheta(tls *libc.TLS, X uintptr, Y uintptr, stereo int32, N1 in
 			if !(i < N1) {
 				break
 			}
-			xy = xy + OpusT_opus_val32(*(*OpusT_opus_val16)(unsafe.Pointer(X + uintptr(i)*4))**(*OpusT_opus_val16)(unsafe.Pointer(X + uintptr(i)*4)))
+			xy = xy + OpusT_opus_val32(x[i]*x[i])
 			i = i + 1
 		}
 		v1 = xy
@@ -745,7 +746,7 @@ func Opus_stereo_itheta(tls *libc.TLS, X uintptr, Y uintptr, stereo int32, N1 in
 			if !(i < N1) {
 				break
 			}
-			xy = xy + OpusT_opus_val32(*(*OpusT_opus_val16)(unsafe.Pointer(Y + uintptr(i)*4))**(*OpusT_opus_val16)(unsafe.Pointer(Y + uintptr(i)*4)))
+			xy = xy + OpusT_opus_val32(y[i]*y[i])
 			i = i + 1
 		}
 		v1 = xy
@@ -2332,267 +2333,44 @@ var ordery_table = [30]int32{
 	29: int32(5),
 }
 
-func deinterleave_hadamard(tls *libc.TLS, X uintptr, N0 int32, stride int32, hadamard int32) {
-	var N, i, j int32
-	var _saved_stack, ordery, st, tmp, v1, v11, v13, v15, v17, v19, v21, v23, v3, v5, v7, v9 uintptr
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = N, _saved_stack, i, j, ordery, st, tmp, v1, v11, v13, v15, v17, v19, v21, v23, v3, v5, v7, v9
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v1 = libc.Xmalloc(tls, uint64(16))
-		st = v1
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
+func deinterleave_hadamard(tls *libc.TLS, X *OpusT_celt_norm, N0 int32, stride int32, hadamard int32) {
+	if stride <= 0 {
+		Opus_celt_fatal(tls, __ccgo_ts+5405, __ccgo_ts+5312, 582)
+	}
+	if N0 == 0 {
+		return
+	}
+	values := unsafe.Slice(X, N0*stride)
+	tmp := make([]OpusT_celt_norm, len(values))
+	for i := int32(0); i < stride; i++ {
+		row := i
+		if hadamard != 0 {
+			row = ordery_table[stride-2+i]
 		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v3 = st
-	_saved_stack = (*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v3)).Fglobal_stack
-	N = N0 * stride
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v1 = libc.Xmalloc(tls, uint64(16))
-		st = v1
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v3 = st
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v5 = libc.Xmalloc(tls, uint64(16))
-		st = v5
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v7 = st
-	(*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v3)).Fglobal_stack += uintptr((uint64(uint32(4)) - uint64(int64((*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v7)).Fglobal_stack))) & (uint64(uint32(4)) - uint64(uint32(1))))
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v9 = libc.Xmalloc(tls, uint64(16))
-		st = v9
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v11 = st
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v13 = libc.Xmalloc(tls, uint64(16))
-		st = v13
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v15 = st
-	if !(int64(int32(uint64(uint32(N))*(uint64(4)/uint64(1)))) <= int64((*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v11)).Fscratch_ptr+uintptr(GLOBAL_STACK_SIZE))-int64((*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v15)).Fglobal_stack)) {
-		Opus_celt_fatal(tls, __ccgo_ts+996, __ccgo_ts+5312, int32(581))
-	}
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v17 = libc.Xmalloc(tls, uint64(16))
-		st = v17
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v19 = st
-	(*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v19)).Fglobal_stack += uintptr(uint64(uint32(N)) * (uint64(4) / uint64(1)))
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v21 = libc.Xmalloc(tls, uint64(16))
-		st = v21
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v23 = st
-	tmp = (*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v23)).Fglobal_stack - uintptr(uint64(uint32(N))*(uint64(4)/uint64(1)))
-	if !(stride > int32(0)) {
-		Opus_celt_fatal(tls, __ccgo_ts+5405, __ccgo_ts+5312, int32(582))
-	}
-	if hadamard != 0 {
-		ordery = uintptr(unsafe.Pointer(&ordery_table)) + uintptr(stride)*4 - uintptr(2)*4
-		i = 0
-		for {
-			if !(i < stride) {
-				break
-			}
-			j = 0
-			for {
-				if !(j < N0) {
-					break
-				}
-				*(*OpusT_celt_norm)(unsafe.Pointer(tmp + uintptr(*(*int32)(unsafe.Pointer(ordery + uintptr(i)*4))*N0+j)*4)) = *(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(j*stride+i)*4))
-				j = j + 1
-			}
-			i = i + 1
-		}
-	} else {
-		i = 0
-		for {
-			if !(i < stride) {
-				break
-			}
-			j = 0
-			for {
-				if !(j < N0) {
-					break
-				}
-				*(*OpusT_celt_norm)(unsafe.Pointer(tmp + uintptr(i*N0+j)*4)) = *(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(j*stride+i)*4))
-				j = j + 1
-			}
-			i = i + 1
+		for j := int32(0); j < N0; j++ {
+			tmp[row*N0+j] = values[j*stride+i]
 		}
 	}
-	libc.Xmemcpy(tls, X, tmp, uint64(uint32(N))*uint64(4)+uint64(0*((int64(X)-int64(tmp))/4)))
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v1 = libc.Xmalloc(tls, uint64(16))
-		st = v1
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v3 = st
-	(*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v3)).Fglobal_stack = _saved_stack
+	copy(values, tmp)
 }
 
-func interleave_hadamard(tls *libc.TLS, X uintptr, N0 int32, stride int32, hadamard int32) {
-	var N, i, j int32
-	var _saved_stack, ordery, st, tmp, v1, v11, v13, v15, v17, v19, v21, v23, v3, v5, v7, v9 uintptr
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = N, _saved_stack, i, j, ordery, st, tmp, v1, v11, v13, v15, v17, v19, v21, v23, v3, v5, v7, v9
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v1 = libc.Xmalloc(tls, uint64(16))
-		st = v1
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
+func interleave_hadamard(tls *libc.TLS, X *OpusT_celt_norm, N0 int32, stride int32, hadamard int32) {
+	N := N0 * stride
+	if N == 0 {
+		return
 	}
-	v3 = st
-	_saved_stack = (*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v3)).Fglobal_stack
-	N = N0 * stride
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v1 = libc.Xmalloc(tls, uint64(16))
-		st = v1
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
+	values := unsafe.Slice(X, N)
+	tmp := make([]OpusT_celt_norm, len(values))
+	for i := int32(0); i < stride; i++ {
+		row := i
+		if hadamard != 0 {
+			row = ordery_table[stride-2+i]
 		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v3 = st
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v5 = libc.Xmalloc(tls, uint64(16))
-		st = v5
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v7 = st
-	(*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v3)).Fglobal_stack += uintptr((uint64(uint32(4)) - uint64(int64((*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v7)).Fglobal_stack))) & (uint64(uint32(4)) - uint64(uint32(1))))
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v9 = libc.Xmalloc(tls, uint64(16))
-		st = v9
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v11 = st
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v13 = libc.Xmalloc(tls, uint64(16))
-		st = v13
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v15 = st
-	if !(int64(int32(uint64(uint32(N))*(uint64(4)/uint64(1)))) <= int64((*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v11)).Fscratch_ptr+uintptr(GLOBAL_STACK_SIZE))-int64((*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v15)).Fglobal_stack)) {
-		Opus_celt_fatal(tls, __ccgo_ts+996, __ccgo_ts+5312, int32(607))
-	}
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v17 = libc.Xmalloc(tls, uint64(16))
-		st = v17
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v19 = st
-	(*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v19)).Fglobal_stack += uintptr(uint64(uint32(N)) * (uint64(4) / uint64(1)))
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v21 = libc.Xmalloc(tls, uint64(16))
-		st = v21
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v23 = st
-	tmp = (*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v23)).Fglobal_stack - uintptr(uint64(uint32(N))*(uint64(4)/uint64(1)))
-	if hadamard != 0 {
-		ordery = uintptr(unsafe.Pointer(&ordery_table)) + uintptr(stride)*4 - uintptr(2)*4
-		i = 0
-		for {
-			if !(i < stride) {
-				break
-			}
-			j = 0
-			for {
-				if !(j < N0) {
-					break
-				}
-				*(*OpusT_celt_norm)(unsafe.Pointer(tmp + uintptr(j*stride+i)*4)) = *(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(*(*int32)(unsafe.Pointer(ordery + uintptr(i)*4))*N0+j)*4))
-				j = j + 1
-			}
-			i = i + 1
-		}
-	} else {
-		i = 0
-		for {
-			if !(i < stride) {
-				break
-			}
-			j = 0
-			for {
-				if !(j < N0) {
-					break
-				}
-				*(*OpusT_celt_norm)(unsafe.Pointer(tmp + uintptr(j*stride+i)*4)) = *(*OpusT_celt_norm)(unsafe.Pointer(X + uintptr(i*N0+j)*4))
-				j = j + 1
-			}
-			i = i + 1
+		for j := int32(0); j < N0; j++ {
+			tmp[j*stride+i] = values[row*N0+j]
 		}
 	}
-	libc.Xmemcpy(tls, X, tmp, uint64(uint32(N))*uint64(4)+uint64(0*((int64(X)-int64(tmp))/4)))
-	st = libc.Xpthread_getspecific(tls, uint32(0x6f707573))
-	if !(st != 0) {
-		v1 = libc.Xmalloc(tls, uint64(16))
-		st = v1
-		if st != 0 {
-			libc.Xmemset(tls, st, 0, uint64(16))
-		}
-		libc.Xpthread_setspecific(tls, uint32(0x6f707573), st)
-	}
-	v3 = st
-	(*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v3)).Fglobal_stack = _saved_stack
+	copy(values, tmp)
 }
 
 func Opus_haar1(tls *libc.TLS, X *OpusT_celt_norm, N0 int32, stride int32) {
@@ -2727,7 +2505,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 		   side and mid. With just that parameter, we can re-scale both
 		   mid and side because we know that 1) they have unit norm and
 		   2) they are orthogonal. */
-		itheta_q30 = Opus_stereo_itheta(tls, X, Y, stereo, N, (*band_ctx)(unsafe.Pointer(ctx)).Farch)
+		itheta_q30 = Opus_stereo_itheta(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), (*OpusT_celt_norm)(unsafe.Pointer(Y)), stereo, N, (*band_ctx)(unsafe.Pointer(ctx)).Farch)
 		itheta = itheta_q30 >> int32(16)
 	}
 	tell = int32(Opus_ec_tell_frac(tls, (*OpusT_ec_ctx)(unsafe.Pointer(ec))))
@@ -3290,10 +3068,10 @@ func quant_band(tls *libc.TLS, ctx uintptr, X uintptr, N int32, b int32, B int32
 	/* Reorganize the samples in time order instead of frequency order */
 	if B0 > int32(1) {
 		if encode != 0 {
-			deinterleave_hadamard(tls, X, N_B>>recombine, B0<<recombine, longBlocks)
+			deinterleave_hadamard(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), N_B>>recombine, B0<<recombine, longBlocks)
 		}
 		if lowband != 0 {
-			deinterleave_hadamard(tls, lowband, N_B>>recombine, B0<<recombine, longBlocks)
+			deinterleave_hadamard(tls, (*OpusT_celt_norm)(unsafe.Pointer(lowband)), N_B>>recombine, B0<<recombine, longBlocks)
 		}
 	}
 	cm = quant_partition(tls, (*band_ctx)(unsafe.Pointer(ctx)), X, N, b, B, lowband, LM, gain, fill)
@@ -3301,7 +3079,7 @@ func quant_band(tls *libc.TLS, ctx uintptr, X uintptr, N int32, b int32, B int32
 	if (*band_ctx)(unsafe.Pointer(ctx)).Fresynth != 0 {
 		/* Undo the sample reorganization going from time order to frequency order */
 		if B0 > int32(1) {
-			interleave_hadamard(tls, X, N_B>>recombine, B0<<recombine, longBlocks)
+			interleave_hadamard(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), N_B>>recombine, B0<<recombine, longBlocks)
 		}
 		/* Undo time-freq changes that we did earlier */
 		N_B = N_B0

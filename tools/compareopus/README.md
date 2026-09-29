@@ -149,6 +149,37 @@ pinned while legacy SILK/CELT uintptr interfaces still use their addresses.
 This fixes read-chunk and multistream regressions exposed by stack-layout changes;
 it does not establish global pointer safety. Pins can be removed as the complete
 call chains become typed.
+IIR/FIR interpolation is compared against the actual static libopus helper,
+including every Q16 fractional phase, saturated inputs, guard samples, and
+input/output overlap. The Go helper returns an output count instead of a
+one-past-end pointer. The IIR/FIR driver also compares PCM and complete filter
+history across empty, short, exact-batch, multi-batch, and consecutive calls,
+including the untouched tail of its FIR union. Its scratch buffer is Go-owned.
+Down-FIR interpolation compares all six coefficient sets, 18/24/36-tap orders,
+every Q16 phase, int32 pair-sum narrowing, saturation, and output guards against
+the actual static C helper. The down-FIR driver additionally checks complete
+state and PCM across consecutive calls, partial/multiple batches, and C's
+unprocessed one-sample remainder. It accepts a typed coefficient table explicitly
+and uses Go-owned scratch, leaving `FCoefs` conversion at the legacy caller.
+Pitch cross-correlation is compared bit-for-bit with the scalar implementation
+compiled from `pitch.c`, covering four-lag groups, scalar tails, minimal input
+extents, and zero-length scalar cases. Stereo-angle inputs are compared exactly
+with scalar `vq.c`, including equal/opposite channels, tiny-energy thresholds,
+large finite magnitudes, and both stereo and independent-energy modes.
+Hadamard interleaving and deinterleaving use typed buffers and Go-owned scratch,
+with bitwise comparisons against the actual static `bands.c` helpers for every
+supported Hadamard stride and plain transpositions, including NaN payloads,
+signed zero, guards, and exact round trips.
+Projection matrix initialization uses a typed header/data path and is compared
+against libopus for metadata, aligned coefficient offsets, and matrix sizes up
+to the channel/count limits. Pointer tests also preserve forward-copy aliasing.
+Projection float output is compared bit-for-bit across matrix columns, input and
+output strides, preloaded accumulators, empty frames, and aliased input/output.
+Projection int16 output additionally covers ties-to-even input conversion,
+NaN/infinity clamping, Q15 product rounding, and wrapping output accumulation.
+Projection int24 output checks finite inputs within C's int32 conversion domain,
+including values beyond normalized unity, ties-to-even conversion, 64-bit
+products, asymmetric Q15 half rounding, and int32 accumulation narrowing.
 Float-to-PCM conversion, VAD initialization,
 Laroia weights, sum-of-squares, bandwidth expansion (16/32-bit), 2:1 downsampling,
 analysis filter bank, high-quality 2× upsampling, mono/stereo biquads, low-pass
