@@ -1516,74 +1516,44 @@ var CELT_PVQ_U_ROW = [15]uintptr{
 	14: uintptr(unsafe.Pointer(&CELT_PVQ_U_DATA)) + uintptr(1257)*4,
 }
 
-func icwrs(tls *libc.TLS, _n int32, _y uintptr) (r OpusT_opus_uint32) {
-	var i OpusT_opus_uint32
-	var j, k, v1, v2 int32
-	_, _, _, _, _ = i, j, k, v1, v2
-	if !(_n >= int32(2)) {
-		Opus_celt_fatal(tls, __ccgo_ts+3610, __ccgo_ts+3634, int32(448))
+func icwrs(tls *libc.TLS, n int32, input *int32) uint32 {
+	if n < 2 {
+		Opus_celt_fatal(tls, __ccgo_ts+3610, __ccgo_ts+3634, 448)
 	}
-	j = _n - int32(1)
-	i = libc.BoolUint32(*(*int32)(unsafe.Pointer(_y + uintptr(j)*4)) < 0)
-	k = libc.Xabs(tls, *(*int32)(unsafe.Pointer(_y + uintptr(j)*4)))
-	for cond := true; cond; cond = j > 0 {
-		j = j - 1
-		if _n-j < k {
-			v1 = _n - j
-		} else {
-			v1 = k
+	y := unsafe.Slice(input, n)
+	j := n - 1
+	index := uint32(0)
+	if y[j] < 0 {
+		index = 1
+	}
+	k := y[j]
+	if k < 0 {
+		k = -k
+	}
+	for {
+		j--
+		index += celtPVQU(min(n-j, k), max(n-j, k))
+		v := y[j]
+		if v < 0 {
+			v = -v
 		}
-		if _n-j > k {
-			v2 = _n - j
-		} else {
-			v2 = k
+		k += v
+		if y[j] < 0 {
+			index += celtPVQU(min(n-j, k+1), max(n-j, k+1))
 		}
-		i = i + *(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v1] + uintptr(v2)*4))
-		k = k + libc.Xabs(tls, *(*int32)(unsafe.Pointer(_y + uintptr(j)*4)))
-		if *(*int32)(unsafe.Pointer(_y + uintptr(j)*4)) < 0 {
-			if _n-j < k+int32(1) {
-				v1 = _n - j
-			} else {
-				v1 = k + int32(1)
-			}
-			if _n-j > k+int32(1) {
-				v2 = _n - j
-			} else {
-				v2 = k + int32(1)
-			}
-			i = i + *(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v1] + uintptr(v2)*4))
+		if j == 0 {
+			break
 		}
 	}
-	return i
+	return index
 }
 
-func Opus_encode_pulses(tls *libc.TLS, _y uintptr, _n int32, _k int32, _enc uintptr) {
-	var v1, v2, v3, v4 int32
-	_, _, _, _ = v1, v2, v3, v4
-	if !(_k > int32(0)) {
-		Opus_celt_fatal(tls, __ccgo_ts+3649, __ccgo_ts+3634, int32(463))
+func Opus_encode_pulses(tls *libc.TLS, y *int32, n, k int32, enc *OpusT_ec_enc) {
+	if k <= 0 {
+		Opus_celt_fatal(tls, __ccgo_ts+3649, __ccgo_ts+3634, 463)
 	}
-	if _n < _k {
-		v1 = _n
-	} else {
-		v1 = _k
-	}
-	if _n > _k {
-		v2 = _n
-	} else {
-		v2 = _k
-	}
-	if _n < _k+int32(1) {
-		v3 = _n
-	} else {
-		v3 = _k + int32(1)
-	}
-	if _n > _k+int32(1) {
-		v4 = _n
-	} else {
-		v4 = _k + int32(1)
-	}
-	Opus_ec_enc_uint(tls, _enc, icwrs(tls, _n, _y), *(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v1] + uintptr(v2)*4))+*(*OpusT_opus_uint32)(unsafe.Pointer(CELT_PVQ_U_ROW[v3] + uintptr(v4)*4)))
+	total := celtPVQU(min(n, k), max(n, k)) + celtPVQU(min(n, k+1), max(n, k+1))
+	Opus_ec_enc_uint(tls, enc, icwrs(tls, n, y), total)
 }
 
 // Row offsets mirror the C table without storing pointers in uintptr values.

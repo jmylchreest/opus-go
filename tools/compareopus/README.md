@@ -246,6 +246,40 @@ bit-accounting wrap and consecutive appends.
 Finalization compares interval termination, pending carries, 0–32 buffered tail
 bits, padding and partial-byte front/tail collisions against C, including guards
 and exhausted output. A focused Go test round-trips typed range and raw-bit coding.
+Unsigned encoder integers compare totals around range/raw-bit split boundaries
+through UINT32_MAX, consecutive operations, finalization and exhausted buffers.
+Go tests round-trip boundary symbols with sole-context output ownership under GC.
+8-bit ICDF encoding compares all symbols in 2/8-bit tables and singleton tables,
+consecutive coding and exhausted output. Go tests round-trip symbols and guard
+the exact table allocation.
+Laplace encoding compares actual C laplace.c state, emitted bytes and in-place
+symbol clipping at representative frequencies/decays, signed tail extremes and
+exhausted buffers. Go tests decode the clipped symbols exactly.
+Laplace-p0 encoding compares signed symbols around each seven-symbol continuation
+boundary, minimum decay probabilities, p0 extremes and output exhaustion. Fixtures
+exclude zero-probability symbols; Go tests round-trip both signs and continuations.
+CWRS indexing compares actual static C icwrs on signed pulse distributions across
+all representative PVQ shapes; Go tests invert sampled indices and check guards.
+Pulse encoding compares native CWRS/entropy state and bytes across PVQ shapes,
+consecutive signed vectors, unchanged inputs and exhausted output. Go tests
+round-trip concentrated pulses including the maximum 176-dimensional shape.
+SILK shell encoding compares actual C depth-first trees for totals 0–16,
+concentrated/random distributions, input preservation and exhausted output.
+Go tests round-trip each concentrated position and verify zero trees consume nothing.
+SILK sign encoding compares every signal/quantization type, signed int8 extremes,
+skipped sums, low-five-bit sum table selection, rounded block counts and 120-sample
+padding against C, checking state, bytes, guards and unchanged inputs. Go tests
+round-trip signs through the typed decoder.
+Fine-energy quantization compares float bit patterns, full encoder state/output,
+optional previous quantization, budget skips, clipping and aliased energy/error arrays.
+Final-energy quantization compares both priority passes, bit-budget edges, maximum
+fine bits, nil/aliased energy outputs, signed zero and NaN sign decisions with C.
+Amplitude-to-log conversion compares raw float bits for exponent/mantissa-bin
+boundaries, subnormals, signed zero, negative inputs, infinities and NaNs, plus
+in-place/partial overlaps and inactive-band fills against C.
+Mini-FFT factorization compares actual mini_kfft.c for lengths 1–4096 and large
+prime/power-of-two boundaries, including radix order, returned word counts and
+untouched factor tails. Go tests also verify products, remainders and guards.
 Float-to-PCM conversion, VAD initialization,
 Laroia weights, sum-of-squares, bandwidth expansion (16/32-bit), 2:1 downsampling,
 analysis filter bank, high-quality 2× upsampling, mono/stereo biquads, low-pass

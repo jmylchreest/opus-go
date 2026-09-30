@@ -646,7 +646,7 @@ func Opus_alg_quant(tls *libc.TLS, X uintptr, N int32, K int32, spread int32, B 
 	Opus_exp_rotation(tls, (*OpusT_celt_norm)(unsafe.Pointer(X)), N, int32(1), B, K, spread)
 	yy = Opus_op_pvq_search_c(tls, X, iy, K, N, arch)
 	collapse_mask = extract_collapse_mask(tls, (*int32)(unsafe.Pointer(iy)), N, B)
-	Opus_encode_pulses(tls, iy, N, K, enc)
+	Opus_encode_pulses(tls, (*int32)(unsafe.Pointer(iy)), N, K, (*OpusT_ec_enc)(unsafe.Pointer(enc)))
 	if resynth != 0 {
 		normalise_residual(tls, (*int32)(unsafe.Pointer(iy)), (*OpusT_celt_norm)(unsafe.Pointer(X)), N, yy, gain, 0)
 	}
@@ -1037,7 +1037,7 @@ func interp_bits2pulses(tls *libc.TLS, m uintptr, start int32, end int32, skip_s
 				v7 = codedBands
 			}
 			*(*int32)(unsafe.Pointer(intensity)) = v7
-			Opus_ec_enc_uint(tls, ec, uint32(*(*int32)(unsafe.Pointer(intensity))-start), uint32(codedBands+int32(1)-start))
+			Opus_ec_enc_uint(tls, (*OpusT_ec_enc)(unsafe.Pointer(ec)), uint32(*(*int32)(unsafe.Pointer(intensity))-start), uint32(codedBands+int32(1)-start))
 		} else {
 			*(*int32)(unsafe.Pointer(intensity)) = int32(uint32(start) + Opus_ec_dec_uint(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(codedBands+int32(1)-start)))
 		}
@@ -2607,7 +2607,7 @@ func compute_theta(tls *libc.TLS, ctx uintptr, sctx uintptr, X uintptr, Y uintpt
 			if B0 > int32(1) || stereo != 0 {
 				/* Uniform pdf */
 				if encode != 0 {
-					Opus_ec_enc_uint(tls, ec, uint32(itheta), uint32(qn+int32(1)))
+					Opus_ec_enc_uint(tls, (*OpusT_ec_enc)(unsafe.Pointer(ec)), uint32(itheta), uint32(qn+int32(1)))
 				} else {
 					itheta = int32(Opus_ec_dec_uint(tls, (*OpusT_ec_dec)(unsafe.Pointer(ec)), uint32(qn+int32(1))))
 				}

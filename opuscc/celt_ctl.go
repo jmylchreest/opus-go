@@ -3,6 +3,7 @@
 package opuscc
 
 import (
+	"math"
 	"math/bits"
 	"reflect"
 	"unsafe"
@@ -1286,17 +1287,17 @@ func Opus_ec_enc_bit_logp(tls *libc.TLS, enc *OpusT_ec_enc, value int32, logp ui
 	ec_enc_normalize(tls, enc)
 }
 
-func Opus_ec_enc_icdf(tls *libc.TLS, _this uintptr, _s int32, _icdf uintptr, _ftb uint32) {
-	var r OpusT_opus_uint32
-	_ = r
-	r = (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng >> _ftb
-	if _s > 0 {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Fval += (*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng - r*uint32(*(*uint8)(unsafe.Pointer(_icdf + uintptr(_s-int32(1)))))
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng = r * uint32(int32(*(*uint8)(unsafe.Pointer(_icdf + uintptr(_s-int32(1)))))-int32(*(*uint8)(unsafe.Pointer(_icdf + uintptr(_s)))))
+func Opus_ec_enc_icdf(tls *libc.TLS, enc *OpusT_ec_enc, symbol int32, icdf *uint8, ftb uint32) {
+	r := enc.Frng >> ftb
+	current := uint32(*(*uint8)(unsafe.Add(unsafe.Pointer(icdf), uintptr(symbol))))
+	if symbol > 0 {
+		previous := uint32(*(*uint8)(unsafe.Add(unsafe.Pointer(icdf), uintptr(symbol-1))))
+		enc.Fval += enc.Frng - r*previous
+		enc.Frng = r * (previous - current)
 	} else {
-		(*OpusT_ec_enc)(unsafe.Pointer(_this)).Frng -= r * uint32(*(*uint8)(unsafe.Pointer(_icdf + uintptr(_s))))
+		enc.Frng -= r * current
 	}
-	ec_enc_normalize(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)))
+	ec_enc_normalize(tls, enc)
 }
 
 func Opus_ec_enc_icdf16(tls *libc.TLS, enc *OpusT_ec_enc, symbol int32, icdf *uint16, ftb uint32) {
@@ -1313,24 +1314,20 @@ func Opus_ec_enc_icdf16(tls *libc.TLS, enc *OpusT_ec_enc, symbol int32, icdf *ui
 	ec_enc_normalize(tls, enc)
 }
 
-func Opus_ec_enc_uint(tls *libc.TLS, _this uintptr, _fl OpusT_opus_uint32, _ft OpusT_opus_uint32) {
-	var fl, ft uint32
-	var ftb int32
-	_, _, _ = fl, ft, ftb
-	/*In order to optimize EC_ILOG(), it is undefined for the value 0.*/
-	if !(_ft > uint32(1)) {
-		Opus_celt_fatal(tls, __ccgo_ts+3569, __ccgo_ts+4699, int32(191))
+func Opus_ec_enc_uint(tls *libc.TLS, enc *OpusT_ec_enc, value, total OpusT_opus_uint32) {
+	if total <= 1 {
+		Opus_celt_fatal(tls, __ccgo_ts+3569, __ccgo_ts+4699, 191)
 	}
-	_ft = _ft - 1
-	ftb = int32(4)*int32(CHAR_BIT) - libc.X__builtin_clz(tls, _ft)
-	if ftb > int32(EC_UINT_BITS) {
-		ftb = ftb - int32(EC_UINT_BITS)
-		ft = _ft>>ftb + uint32(1)
-		fl = _fl >> ftb
-		Opus_ec_encode(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), fl, fl+uint32(1), ft)
-		Opus_ec_enc_bits(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), _fl&(uint32(1)<<ftb-uint32(1)), uint32(ftb))
+	maximum := total - 1
+	width := bits.Len32(maximum)
+	if width > EC_UINT_BITS {
+		width -= EC_UINT_BITS
+		highTotal := maximum>>width + 1
+		high := value >> width
+		Opus_ec_encode(tls, enc, high, high+1, highTotal)
+		Opus_ec_enc_bits(tls, enc, value&(uint32(1)<<width-1), uint32(width))
 	} else {
-		Opus_ec_encode(tls, (*OpusT_ec_enc)(unsafe.Pointer(_this)), _fl, _fl+uint32(1), _ft+uint32(1))
+		Opus_ec_encode(tls, enc, value, value+1, total)
 	}
 }
 
@@ -1985,7 +1982,7 @@ func quant_coarse_energy_impl(tls *libc.TLS, m uintptr, start int32, end int32, 
 					v2 = int32(20)
 				}
 				pi = int32(2) * v2
-				Opus_ec_laplace_encode(tls, enc, uintptr(unsafe.Pointer(&qi)), uint32(int32(*(*uint8)(unsafe.Pointer(prob_model + uintptr(pi))))<<int32(7)), int32(*(*uint8)(unsafe.Pointer(prob_model + uintptr(pi+int32(1)))))<<int32(6))
+				Opus_ec_laplace_encode(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), &qi, uint32(int32(*(*uint8)(unsafe.Pointer(prob_model + uintptr(pi))))<<int32(7)), int32(*(*uint8)(unsafe.Pointer(prob_model + uintptr(pi+int32(1)))))<<int32(6))
 			} else {
 				if budget-tell >= int32(2) {
 					if qi < int32(1) {
@@ -2004,7 +2001,7 @@ func quant_coarse_energy_impl(tls *libc.TLS, m uintptr, start int32, end int32, 
 						v2 = v9
 					}
 					qi = v2
-					Opus_ec_enc_icdf(tls, enc, int32(2)*qi^-libc.BoolInt32(qi < 0), uintptr(unsafe.Pointer(&small_energy_icdf)), uint32(2))
+					Opus_ec_enc_icdf(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), int32(2)*qi^-libc.BoolInt32(qi < 0), &small_energy_icdf[0], uint32(2))
 				} else {
 					if budget-tell >= int32(1) {
 						if 0 < qi {
@@ -2336,102 +2333,75 @@ func Opus_quant_coarse_energy(tls *libc.TLS, m uintptr, start int32, end int32, 
 	(*OpusT_opus_ccgo_pseudostack_state)(unsafe.Pointer(v3)).Fglobal_stack = _saved_stack
 }
 
-func Opus_quant_fine_energy(tls *libc.TLS, m uintptr, start int32, end int32, oldEBands uintptr, error1 uintptr, prev_quant uintptr, extra_quant uintptr, enc uintptr, C int32) {
-	var c, i, q2, v3 int32
-	var extra, prev OpusT_opus_int16
-	var offset OpusT_celt_glog
-	var v2 uintptr
-	_, _, _, _, _, _, _, _ = c, extra, i, offset, prev, q2, v2, v3
-	/* Encode finer resolution */
-	i = start
-	for {
-		if !(i < end) {
-			break
+func Opus_quant_fine_energy(tls *libc.TLS, m *OpusT_OpusCustomMode, start, end int32, oldEBands, error1 *OpusT_celt_glog, prevQuant, extraQuant *int32, enc *OpusT_ec_enc, C int32) {
+	if start >= end {
+		return
+	}
+	extraQ := unsafe.Slice(extraQuant, end)
+	var previous []int32
+	if prevQuant != nil {
+		previous = unsafe.Slice(prevQuant, end)
+	}
+	old := unsafe.Slice(oldEBands, C*m.FnbEBands)
+	err := unsafe.Slice(error1, C*m.FnbEBands)
+	for i := start; i < end; i++ {
+		width := extraQ[i]
+		if width <= 0 {
+			continue
 		}
-		extra = int16(int32(1) << *(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4)))
-		if *(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4)) <= 0 {
-			goto _1
+		extra := int16(int32(1) << width)
+		tell := enc.Fnbits_total - int32(bits.Len32(enc.Frng))
+		if tell+C*width > int32(enc.Fstorage)*8 {
+			continue
 		}
-		v2 = enc
-		v3 = (*OpusT_ec_ctx)(unsafe.Pointer(v2)).Fnbits_total - (int32(4)*int32(CHAR_BIT) - libc.X__builtin_clz(tls, (*OpusT_ec_ctx)(unsafe.Pointer(v2)).Frng))
-		if v3+C**(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4)) > int32((*OpusT_ec_enc)(unsafe.Pointer(enc)).Fstorage)*int32(8) {
-			goto _1
+		prev := int16(0)
+		if previous != nil {
+			prev = int16(previous[i])
 		}
-		if prev_quant != uintptr(uint32(0)) {
-			v3 = *(*int32)(unsafe.Pointer(prev_quant + uintptr(i)*4))
-		} else {
-			v3 = 0
+		for c := int32(0); c < C; c++ {
+			pos := i + c*m.FnbEBands
+			scaled := float32(err[pos] * float32(int32(1)<<prev))
+			q2 := int32(libc.Xfloor(tls, float64(float32((scaled+float32(.5))*float32(extra)))))
+			q2 = max(int32(0), min(q2, int32(extra)-1))
+			Opus_ec_enc_bits(tls, enc, uint32(q2), uint32(width))
+			offset := float32(float32((float32(q2)+.5)*float32(int32(1)<<(14-width)))*(float32(1)/16384)) - .5
+			offset = float32(offset * float32(float32(int32(1)<<(14-int32(prev)))*(float32(1)/16384)))
+			old[pos] += offset
+			err[pos] -= offset
 		}
-		prev = int16(v3)
-		c = 0
-		for {
-			q2 = int32(libc.Xfloor(tls, float64((OpusT_celt_glog(*(*OpusT_celt_glog)(unsafe.Pointer(error1 + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4))*float32(int32(1)<<prev))+float32(0.5))*float32(extra))))
-			if q2 > int32(extra)-int32(1) {
-				q2 = int32(extra) - int32(1)
-			}
-			if q2 < 0 {
-				q2 = 0
-			}
-			Opus_ec_enc_bits(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), uint32(q2), uint32(*(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4))))
-			offset = float32(float32((float32(q2)+float32(0.5))*float32(int32(1)<<(int32(14)-*(*int32)(unsafe.Pointer(extra_quant + uintptr(i)*4)))))*(float32(1)/float32(16384))) - float32(0.5)
-			offset = offset * OpusT_celt_glog(float32(int32(1)<<(int32(14)-int32(prev)))*(float32(1)/float32(16384)))
-			*(*OpusT_celt_glog)(unsafe.Pointer(oldEBands + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) += offset
-			*(*OpusT_celt_glog)(unsafe.Pointer(error1 + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) -= offset
-			/*printf ("%f ", error[i] - offset);*/
-			c = c + 1
-			v3 = c
-			if !(v3 < C) {
-				break
-			}
-		}
-	_1:
-		i = i + 1
 	}
 }
 
-func Opus_quant_energy_finalise(tls *libc.TLS, m uintptr, start int32, end int32, oldEBands uintptr, error1 uintptr, fine_quant uintptr, fine_priority uintptr, bits_left int32, enc uintptr, C int32) {
-	var c, i, prio, q2, v3, v5 int32
-	var offset OpusT_celt_glog
-	_, _, _, _, _, _, _ = c, i, offset, prio, q2, v3, v5
-	/* Use up the remaining bits */
-	prio = 0
-	for {
-		if !(prio < int32(2)) {
-			break
+func Opus_quant_energy_finalise(tls *libc.TLS, m *OpusT_OpusCustomMode, start, end int32, oldEBands, error1 *OpusT_celt_glog, fineQuant, finePriority *int32, bitsLeft int32, enc *OpusT_ec_enc, C int32) {
+	if start >= end || bitsLeft < C {
+		return
+	}
+	quant, priority := unsafe.Slice(fineQuant, end), unsafe.Slice(finePriority, end)
+	err := unsafe.Slice(error1, C*m.FnbEBands)
+	var old []float32
+	if oldEBands != nil {
+		old = unsafe.Slice(oldEBands, C*m.FnbEBands)
+	}
+	for prio := int32(0); prio < 2; prio++ {
+		for i := start; i < end && bitsLeft >= C; i++ {
+			if quant[i] >= MAX_FINE_BITS || priority[i] != prio {
+				continue
+			}
+			for c := int32(0); c < C; c++ {
+				pos := i + c*m.FnbEBands
+				q2 := uint32(1)
+				if err[pos] < 0 {
+					q2 = 0
+				}
+				Opus_ec_enc_bits(tls, enc, q2, 1)
+				offset := float32(float32((float32(q2)-.5)*float32(int32(1)<<(14-quant[i]-1))) * (float32(1) / 16384))
+				if old != nil {
+					old[pos] += offset
+				}
+				err[pos] -= offset
+				bitsLeft--
+			}
 		}
-		i = start
-		for {
-			if !(i < end && bits_left >= C) {
-				break
-			}
-			if *(*int32)(unsafe.Pointer(fine_quant + uintptr(i)*4)) >= int32(MAX_FINE_BITS) || *(*int32)(unsafe.Pointer(fine_priority + uintptr(i)*4)) != prio {
-				goto _2
-			}
-			c = 0
-			for {
-				if *(*OpusT_celt_glog)(unsafe.Pointer(error1 + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) < float32(0) {
-					v5 = 0
-				} else {
-					v5 = int32(1)
-				}
-				q2 = v5
-				Opus_ec_enc_bits(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), uint32(q2), uint32(1))
-				offset = OpusT_celt_glog(float32((float32(q2)-float32(0.5))*float32(int32(1)<<(int32(14)-*(*int32)(unsafe.Pointer(fine_quant + uintptr(i)*4))-int32(1)))) * (float32(1) / float32(16384)))
-				if oldEBands != uintptr(uint32(0)) {
-					*(*OpusT_celt_glog)(unsafe.Pointer(oldEBands + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) += offset
-				}
-				*(*OpusT_celt_glog)(unsafe.Pointer(error1 + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) -= offset
-				bits_left = bits_left - 1
-				c = c + 1
-				v3 = c
-				if !(v3 < C) {
-					break
-				}
-			}
-		_2:
-			i = i + 1
-		}
-		prio = prio + 1
 	}
 }
 
@@ -2528,41 +2498,33 @@ func Opus_unquant_energy_finalise(tls *libc.TLS, m *OpusT_OpusCustomMode, start,
 	}
 }
 
-func Opus_amp2Log2(tls *libc.TLS, m uintptr, effEnd int32, end int32, bandE uintptr, bandLogE uintptr, C int32) {
-	var c, i, v1 int32
-	var integer, range_idx OpusT_opus_int32
-	var v4 float32
-	var in OpusT_opus_uint32
-	_, _, _, _, _, _ = c, i, integer, range_idx, v1, v4
-	c = 0
-	for {
-		i = 0
-		for {
-			if !(i < effEnd) {
-				break
-			}
-			*(*float32)(unsafe.Pointer(&in)) = *(*OpusT_celt_ener)(unsafe.Pointer(bandE + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4))
-			integer = int32(in>>int32(23)) - int32(127)
-			in = uint32(int32(in) - int32(uint32(integer)<<int32(23)))
-			range_idx = int32(in >> int32(20) & uint32(0x7))
-			*(*float32)(unsafe.Pointer(&in)) = float32(*(*float32)(unsafe.Pointer(&in))*log2_x_norm_coeff10[range_idx]) - float32(1.0625)
-			*(*float32)(unsafe.Pointer(&in)) = float32(0.08746284246444702) + float32(*(*float32)(unsafe.Pointer(&in))*(float32(1.3578295707702637)+float32(*(*float32)(unsafe.Pointer(&in))*(-float32(0.63897705078125)+float32(*(*float32)(unsafe.Pointer(&in))*(float32(0.4019712507724762)+float32(*(*float32)(unsafe.Pointer(&in))*-float32(0.2841544449329376))))))))
-			v4 = float32(integer) + *(*float32)(unsafe.Pointer(&in)) + log2_y_norm_coeff10[range_idx]
-			*(*OpusT_celt_glog)(unsafe.Pointer(bandLogE + uintptr(i+c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands)*4)) = v4 - Opus_eMeans[i]
-			i = i + 1
+func Opus_amp2Log2(tls *libc.TLS, m *OpusT_OpusCustomMode, effEnd, end int32, bandE *OpusT_celt_ener, bandLogE *OpusT_celt_glog, C int32) {
+	if end <= 0 {
+		return
+	}
+	var energy []float32
+	if effEnd > 0 {
+		energy = unsafe.Slice(bandE, C*m.FnbEBands)
+	}
+	out := unsafe.Slice(bandLogE, C*m.FnbEBands)
+	for c := int32(0); c < C; c++ {
+		for i := int32(0); i < effEnd; i++ {
+			pos := i + c*m.FnbEBands
+			in := math.Float32bits(energy[pos])
+			integer := int32(in>>23) - 127
+			in -= uint32(integer) << 23
+			rangeIndex := (in >> 20) & 7
+			x := float32(math.Float32frombits(in)*log2_x_norm_coeff10[rangeIndex]) - float32(1.0625)
+			// Explicit float32 products preserve the C Horner evaluation boundaries.
+			p := float32(.4019712507724762) + float32(x*float32(-.2841544449329376))
+			p = float32(-.63897705078125) + float32(x*p)
+			p = float32(1.3578295707702637) + float32(x*p)
+			p = float32(.08746284246444702) + float32(x*p)
+			v := float32(float32(integer)+p) + log2_y_norm_coeff10[rangeIndex]
+			out[pos] = v - Opus_eMeans[i]
 		}
-		i = effEnd
-		for {
-			if !(i < end) {
-				break
-			}
-			*(*OpusT_celt_glog)(unsafe.Pointer(bandLogE + uintptr(c*(*OpusT_OpusCustomMode)(unsafe.Pointer(m)).FnbEBands+i)*4)) = -float32(14)
-			i = i + 1
-		}
-		c = c + 1
-		v1 = c
-		if !(v1 < C) {
-			break
+		for i := effEnd; i < end; i++ {
+			out[c*m.FnbEBands+i] = -14
 		}
 	}
 }

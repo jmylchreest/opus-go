@@ -3,6 +3,7 @@
 package opuscc
 
 import (
+	"math"
 	"reflect"
 	"unsafe"
 
@@ -699,36 +700,33 @@ var __func__ = [8]int8{'k', 'f', '_', 'w', 'o', 'r', 'k'}
 //	    where
 //	    p[i] * m[i] = m[i-1]
 //	    m0 = n                  */
-func kf_factor(tls *libc.TLS, n int32, facbuf uintptr) {
-	var floor_sqrt float64
-	var p int32
-	var v1 uintptr
-	_, _, _ = floor_sqrt, p, v1
-	p = int32(4)
-	floor_sqrt = libc.Xfloor(tls, libc.Xsqrt(tls, float64(n)))
-	/*factor out powers of 4, powers of 2, then any remaining primes */
-	for cond := true; cond; cond = n > int32(1) {
+//
+// kf_factor requires positive n, like the C helper, and leaves unused factors untouched.
+func kf_factor(tls *libc.TLS, n int32, factors *[2 * MINI_MAXFACTORS]int32) int {
+	p := int32(4)
+	floorSqrt := math.Floor(math.Sqrt(float64(n)))
+	used := 0
+	for {
 		for n%p != 0 {
 			switch p {
-			case int32(4):
-				p = int32(2)
-			case int32(2):
-				p = int32(3)
+			case 4:
+				p = 2
+			case 2:
+				p = 3
 			default:
-				p = p + int32(2)
-				break
+				p += 2
 			}
-			if float64(p) > floor_sqrt {
+			if float64(p) > floorSqrt {
 				p = n
-			} /* no more factors, skip to end */
+			}
 		}
-		n = n / p
-		v1 = facbuf
-		facbuf += 4
-		*(*int32)(unsafe.Pointer(v1)) = p
-		v1 = facbuf
-		facbuf += 4
-		*(*int32)(unsafe.Pointer(v1)) = n
+		n /= p
+		factors[used] = p
+		factors[used+1] = n
+		used += 2
+		if n <= 1 {
+			return used
+		}
 	}
 }
 
@@ -775,7 +773,7 @@ func Opus_mini_kiss_fft_alloc(tls *libc.TLS, nfft int32, inverse_fft int32, mem 
 			(*OpusT_mini_kiss_fft_cpx)(unsafe.Pointer(uintptr(unsafe.Pointer(&state.Ftwiddles[0])) + uintptr(i)*8)).Fi = float32(libc.Xsin(tls, phase))
 			i = i + 1
 		}
-		kf_factor(tls, nfft, uintptr(unsafe.Pointer(&state.Ffactors[0])))
+		kf_factor(tls, nfft, &state.Ffactors)
 	}
 	return st
 }
@@ -950,58 +948,44 @@ func ec_laplace_get_freq1(tls *libc.TLS, fs0 uint32, decay int32) (r uint32) {
 	return ft * uint32(int32(16384)-decay) >> int32(15)
 }
 
-func Opus_ec_laplace_encode(tls *libc.TLS, enc uintptr, value uintptr, fs uint32, decay int32) {
-	var di, i, ndi_max, s, val, v2 int32
-	var fl, v3 uint32
-	_, _, _, _, _, _, _, _ = di, fl, i, ndi_max, s, val, v2, v3
-	val = *(*int32)(unsafe.Pointer(value))
-	fl = uint32(0)
+func Opus_ec_laplace_encode(tls *libc.TLS, enc *OpusT_ec_enc, value *int32, fs uint32, decay int32) {
+	val := *value
+	fl := uint32(0)
 	if val != 0 {
-		s = -libc.BoolInt32(val < 0)
-		val = val + s ^ s
+		s := int32(0)
+		if val < 0 {
+			s = -1
+		}
+		val = (val + s) ^ s
 		fl = fs
 		fs = ec_laplace_get_freq1(tls, fs, decay)
-		/* Search the decaying part of the PDF.*/
-		i = int32(1)
-		for {
-			if !(fs > uint32(0) && i < val) {
-				break
-			}
-			fs = fs * uint32(2)
-			fl = fl + (fs + uint32(int32(2)*(int32(1)<<int32(LAPLACE_LOG_MINP))))
-			fs = fs * uint32(decay) >> int32(15)
-			i = i + 1
+		i := int32(1)
+		for fs > 0 && i < val {
+			fs *= 2
+			fl += fs + 2*(1<<LAPLACE_LOG_MINP)
+			fs = fs * uint32(decay) >> 15
+			i++
 		}
-		/* Everything beyond that has probability LAPLACE_MINP. */
-		if !(fs != 0) {
-			ndi_max = int32((uint32(32768) - fl + uint32(int32(1)<<int32(LAPLACE_LOG_MINP)) - uint32(1)) >> LAPLACE_LOG_MINP)
-			ndi_max = (ndi_max - s) >> int32(1)
-			if val-i < ndi_max-int32(1) {
-				v2 = val - i
-			} else {
-				v2 = ndi_max - int32(1)
-			}
-			di = v2
-			fl = fl + uint32((int32(2)*di+int32(1)+s)*(int32(1)<<int32(LAPLACE_LOG_MINP)))
-			if uint32(int32(1)<<int32(LAPLACE_LOG_MINP)) < uint32(32768)-fl {
-				v3 = uint32(int32(1) << int32(LAPLACE_LOG_MINP))
-			} else {
-				v3 = uint32(32768) - fl
-			}
-			fs = v3
-			*(*int32)(unsafe.Pointer(value)) = i + di + s ^ s
+		if fs == 0 {
+			maximum := int32((32768 - fl + (1 << LAPLACE_LOG_MINP) - 1) >> LAPLACE_LOG_MINP)
+			maximum = (maximum - s) >> 1
+			di := min(val-i, maximum-1)
+			fl += uint32((2*di + 1 + s) * (1 << LAPLACE_LOG_MINP))
+			fs = min(uint32(1<<LAPLACE_LOG_MINP), 32768-fl)
+			// Clip the caller's symbol before updating the entropy context (C order).
+			*value = (i + di + s) ^ s
 		} else {
-			fs = fs + uint32(int32(1)<<int32(LAPLACE_LOG_MINP))
-			fl = fl + fs&uint32(^s)
+			fs += 1 << LAPLACE_LOG_MINP
+			fl += fs & uint32(^s)
 		}
-		if !(fl+fs <= uint32(32768)) {
-			Opus_celt_fatal(tls, __ccgo_ts+5600, __ccgo_ts+5631, int32(88))
+		if fl+fs > 32768 {
+			Opus_celt_fatal(tls, __ccgo_ts+5600, __ccgo_ts+5631, 88)
 		}
-		if !(fs > uint32(0)) {
-			Opus_celt_fatal(tls, __ccgo_ts+5649, __ccgo_ts+5631, int32(89))
+		if fs == 0 {
+			Opus_celt_fatal(tls, __ccgo_ts+5649, __ccgo_ts+5631, 89)
 		}
 	}
-	Opus_ec_encode_bin(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), fl, fl+fs, uint32(15))
+	Opus_ec_encode_bin(tls, enc, fl, fl+fs, 15)
 }
 
 func Opus_ec_laplace_decode(tls *libc.TLS, dec *OpusT_ec_dec, fs uint32, decay int32) (r int32) {
@@ -1061,57 +1045,33 @@ func Opus_ec_laplace_decode(tls *libc.TLS, dec *OpusT_ec_dec, fs uint32, decay i
 	return val
 }
 
-func Opus_ec_laplace_encode_p0(tls *libc.TLS, enc uintptr, value int32, p0 OpusT_opus_uint16, decay OpusT_opus_uint16) {
-	var i, s, v1, v2 int32
-	var icdf [8]OpusT_opus_uint16
-	var sign_icdf [3]OpusT_opus_uint16
-	_, _, _, _ = i, s, v1, v2
-	sign_icdf[0] = uint16(32768 - int32(p0))
-	sign_icdf[1] = uint16(int32(sign_icdf[0]) / 2)
-	sign_icdf[2] = 0
-	if value == 0 {
-		v1 = 0
-	} else {
-		if value > 0 {
-			v2 = int32(1)
-		} else {
-			v2 = int32(2)
-		}
-		v1 = v2
+func Opus_ec_laplace_encode_p0(tls *libc.TLS, enc *OpusT_ec_enc, value int32, p0 OpusT_opus_uint16, decay OpusT_opus_uint16) {
+	var signICDF [3]uint16
+	signICDF[0] = uint16(32768 - int32(p0))
+	signICDF[1] = signICDF[0] / 2
+	s := int32(0)
+	if value > 0 {
+		s = 1
+	} else if value < 0 {
+		s = 2
 	}
-	s = v1
-	Opus_ec_enc_icdf16(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), s, &sign_icdf[0], uint32(15))
-	value = libc.Xabs(tls, value)
+	Opus_ec_enc_icdf16(tls, enc, s, &signICDF[0], 15)
+	if value < 0 {
+		value = -value
+	}
 	if value != 0 {
-		if int32(7) > int32(decay) {
-			v1 = int32(7)
-		} else {
-			v1 = int32(decay)
+		var icdf [8]uint16
+		icdf[0] = max(uint16(7), decay)
+		for i := int32(1); i < 7; i++ {
+			icdf[i] = uint16(max(7-i, int32(icdf[i-1])*int32(decay)>>15))
 		}
-		icdf[0] = uint16(v1)
-		i = int32(1)
+		value--
 		for {
-			if !(i < int32(7)) {
+			Opus_ec_enc_icdf16(tls, enc, min(value, int32(7)), &icdf[0], 15)
+			value -= 7
+			if value < 0 {
 				break
 			}
-			if 7-i > int32(icdf[i-1])*int32(decay)>>int32(15) {
-				v1 = int32(7) - i
-			} else {
-				v1 = int32(icdf[i-1]) * int32(decay) >> int32(15)
-			}
-			icdf[i] = uint16(v1)
-			i = i + 1
-		}
-		icdf[7] = 0
-		value = value - 1
-		for cond := true; cond; cond = value >= 0 {
-			if value < int32(7) {
-				v1 = value
-			} else {
-				v1 = int32(7)
-			}
-			Opus_ec_enc_icdf16(tls, (*OpusT_ec_enc)(unsafe.Pointer(enc)), v1, &icdf[0], uint32(15))
-			value = value - int32(7)
 		}
 	}
 }
