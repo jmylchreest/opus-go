@@ -63,7 +63,7 @@ func TestProjectionDecoderInitCReference(t *testing.T) {
 				t.Fatal(err)
 			}
 			d := (*OpusT_OpusProjectionDecoder)(unsafe.Pointer(st))
-			m := (*OpusT_MappingMatrix)(unsafe.Pointer(get_dec_demixing_matrix(tls, st)))
+			m := get_dec_demixing_matrix(tls, d)
 			if d.Fdemixing_matrix_size_in_bytes != matrixSize || m.Frows != rows || m.Fcols != cols || m.Fgain != gain {
 				t.Fatalf("matrix header mismatch: %+v, bytes %d", m, d.Fdemixing_matrix_size_in_bytes)
 			}
@@ -76,7 +76,7 @@ func TestProjectionDecoderInitCReference(t *testing.T) {
 			if hash != wantHash {
 				t.Fatalf("matrix hash %d, want %d", hash, wantHash)
 			}
-			ms := (*OpusT_OpusMSDecoder)(unsafe.Pointer(get_multistream_decoder(tls, st)))
+			ms := get_multistream_decoder(tls, d)
 			if ms.Flayout.Fnb_channels != ch || ms.Flayout.Fnb_streams != streams || ms.Flayout.Fnb_coupled_streams != coupled {
 				t.Fatal("multistream layout mismatch")
 			}

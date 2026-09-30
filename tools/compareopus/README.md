@@ -280,6 +280,35 @@ in-place/partial overlaps and inactive-band fills against C.
 Mini-FFT factorization compares actual mini_kfft.c for lengths 1–4096 and large
 prime/power-of-two boundaries, including radix order, returned word counts and
 untouched factor tails. Go tests also verify products, remainders and guards.
+Multistream float channel output compares the actual static C helper for varied
+strides/channels, zero-length and nil-source fills, raw float bits and forward overlap.
+Multistream int16 output compares clipping, ties-even conversion, NaN/infinity
+handling, zero-stride writes, nil fills and guards against the actual static C helper.
+Multistream int24 output compares scaling and ties-even conversion without 24-bit
+clipping, full representable int32-domain boundaries, strides, nil fills and guards.
+Exported 8-bit ICDF decoding compares C decision-threshold neighbors, representative
+ranges, singleton/exact-size tables and exhausted input, including full context state
+and unchanged inputs. Go tests retain packet ownership solely through the decoder.
+SILK gain quantization compares all signed previous-index values, conditional/full
+coding, 1/2/4 subframes and aliased previous/index storage against C; Go tests
+round-trip valid gain histories through typed dequantization.
+PLC parameter updates compare actual static PLC.c for 2/4 subframes, LPC orders
+10/16, signal types and LTP gain clamp/narrowing edges, checking all PLC fields,
+unchanged control and unused LPC tails.
+PLC frame gluing compares concealed-energy capture, unequal energy shifts, integer
+sqrt approximation, onset fade/break boundaries and saturation-extreme PCM with C,
+checking full Go state, frame guards and zero-length no-op behavior.
+Projection demixing-matrix access compares the actual static C accessor's aligned
+interior pointer and header fields; Go tests retain the backing allocation solely
+through returned matrix/coefficient pointers during GC and stack growth.
+Projection multistream-state access compares native alignment for matrix sizes
+0–1024 and checks interior-pointer ownership through GC and stack growth.
+Projection float output compares actual C callbacks over consecutive input channels,
+clear-before-read aliasing, nil sources, frame boundaries and valid matrix/stride extents.
+Projection int16 output compares first-channel clearing, later-channel accumulation,
+clipping/ties/NaN inputs, nil sources and destination guards against actual C callbacks.
+Projection int24 output compares channel clearing/accumulation, rounding boundaries,
+representable int32 extremes, nil sources and guards without adding 24-bit clipping.
 Float-to-PCM conversion, VAD initialization,
 Laroia weights, sum-of-squares, bandwidth expansion (16/32-bit), 2:1 downsampling,
 analysis filter bank, high-quality 2× upsampling, mono/stereo biquads, low-pass
